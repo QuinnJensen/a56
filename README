@@ -1,0 +1,92 @@
+
+  a56 - a DSP56001 assembler - version 1.0
+
+/*
+ * Copyright (C) 1990, 1991 Quinn C. Jensen
+ *
+ * Permission to use, copy, modify, distribute, and sell this software
+ * and its documentation for any purpose is hereby granted without fee,
+ * provided that the above copyright notice appear in all copies and
+ * that both that copyright notice and this permission notice appear
+ * in supporting documentation.  The author makes no representations
+ * about the suitability of this software for any purpose.  It is
+ * provided "as is" without express or implied warranty.
+ *
+ */
+
+OVERVIEW
+
+This program was written as a vehicle to learn the intricacies
+of the DSP56001 instruction set, and to provide a tool for Unix-based
+DSP code development (for those of us without a NeXT machine.)
+
+The intent was to provide compatibility with Motorola assembler's syntax.
+But since the author did not have Motorola's assembler or its documentation,
+it is no doubt far from compatible.  Only a few pseudo-ops are implemented--
+probably only partially.
+
+Macros are not supported, except through the use of an external macro
+preprocessor, such as /lib/cpp.  Multiple statements on a single input line
+are delimited with an '@'.
+
+SUPPORTED PSEUDO-OPS
+
+The following is a list of the pseudo-ops that are recognized:
+
+	<symbol> = <expression>				;assign a symbol
+	
+	ORG <space:> <expression>			;new location pointer
+	ORG <space:> <expression>, <space:> <expression>
+
+	DC <dc_list>					;declare constants
+
+	PAGE <number>, <number>, <number>, <number>	;ignored
+
+	INCLUDE <file>					;file inclusion
+
+	END						;end
+
+In addition, a "PSECT" pseudo-op was implemented.  It allows program sections
+to be defined and bopped in and out of, each with its own location counter and
+space.  The Motorola assembler probably does not have this pseudo-op, but no
+doubt supports the concept in some way.
+
+	PSECT <name> <space:><begin_addr>:<end_addr>	;define
+
+	PSECT <name>					;switch to psect <name>
+
+
+FUTURE DIRECTION
+
+The assembler probably generates bogus code here and there, and no doubt
+does not handle all of the syntax.  I welcome all comments, fixes and 
+enhancements.  My desire is to make this assembler support all of the syntax
+needed by Andrew Sterian's GNU C-compiler for the 56k, recently posted
+on alt.sources.
+
+TO MAKE AND USE
+
+Type "make".  gram.c and lex.yy.c are provided for those without yacc
+(or bison) and/or lex.
+
+The resulting program, a56, is used as follows:
+
+	a56 [-b] file [...]
+
+An assembler listing is sent to the standard-output and an ascii-formatted
+object file (a56.out) is produced.  The "-b" option adds binary to the listing.
+A separate program, toomf, converts a56.out into "OMF" format suitable for 
+downloading to the 56001 via the sloader.a56 program.
+
+	toomf < a56.out > file.omf
+
+AUTHOR
+
+11/28/91
+
+Quinn C. Jensen
+1374 N 40 E
+Orem, UT  84057
+
+work: jensenq@npd.novell.com	801-429-3170
+home: jensenq@qcj.icon.com

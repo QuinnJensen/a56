@@ -1,0 +1,37 @@
+/*******************************************************
+ *
+ *  a56 - a DSP56001 assembler
+ *
+ *  Written by Quinn C. Jensen
+ *  July 1990
+ *  jensenq@npd.novell.com (or jensenq@qcj.icon.com)
+ *
+ *******************************************************\
+
+/*
+ *  lex.c - lexical analyzer envelope.  lex.yy.c, included below,
+ *  is the LEX-generated code.
+ *
+ */
+
+#include "gram.h"
+#include "a56.h"
+
+extern YYSTYPE yyval;
+
+int ldebug;
+
+#define LDEBUG
+#ifdef LDEBUG
+#define RET(val) \
+	if(ldebug) {\
+	       	printf("%s ", tok_print(val));\
+		fflush(stdout);\
+	}\
+	return(val)
+#else
+#define RET(val) return(val)
+#endif
+
+#include "lex.yy.c"
+
