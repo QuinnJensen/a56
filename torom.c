@@ -4,12 +4,11 @@
  *
  *  Written by Quinn C. Jensen
  *  July 1990
- *  jensenq@npd.novell.com (or jensenq@qcj.icon.com)
  *
  *******************************************************\
 
 /*
- * Copyright (C) 1990-1992 Quinn C. Jensen
+ * Copyright (C) 1990-1994 Quinn C. Jensen
  *
  * Permission to use, copy, modify, distribute, and sell this software
  * and its documentation for any purpose is hereby granted without fee,
@@ -20,7 +19,7 @@
  * provided "as is" without express or implied warranty.
  *
  */
-static char *Copyright = "Copyright (C) 1990-1992 Quinn C. Jensen";
+static char *Copyright = "Copyright (C) 1990-1994 Quinn C. Jensen";
 
 /*
  *  This program converts the a56.out assembler output file into

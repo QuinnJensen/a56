@@ -1,8 +1,0 @@
-#!/bin/csh -f
-set version=v1.1
-echo Building release for $version
-cd $version
-foreach i (1 2 3 4)
-	echo "  part $i..."
-	shar -v `cat ../files.$i` > ../part$i
-end

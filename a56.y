@@ -5,12 +5,11 @@
  *
  *  Written by Quinn C. Jensen
  *  July 1990
- *  jensenq@npd.novell.com (or jensenq@qcj.icon.com)
  *
- *******************************************************\
+ *******************************************************/
 
 /*
- * Copyright (C) 1990-1992 Quinn C. Jensen
+ * Copyright (C) 1990-1994 Quinn C. Jensen
  *
  * Permission to use, copy, modify, distribute, and sell this software
  * and its documentation for any purpose is hereby granted without fee,
@@ -36,46 +35,58 @@
  */
 
 #include "a56.h"
-unsigned int w0, w1, pc;
-extern BOOL list_on;
-BOOL uses_w1;
-int just_rep = 0;
-extern char inline[];
-char *spaces(), *luntab();
+
+unsigned int w0, w1;			/* workspace for the actual generated code */
+BOOL uses_w1;					/* says whether w1 is alive */
+unsigned int pc;				/* current program counter */
+int seg;						/* current segment P: X: Y: or L: */
+
+int just_rep = 0;				/* keeps track of REP instruction */
+int substatement = 0;			/* in a substatement */
+BOOL long_symbolic_expr = FALSE; /* a parser flag */
+char *new_include = NULL;		/* file to be included */
+
+/* listing stuff */
+
 char segs[] = "PXYL";
-int seg;
-int substatement = 0;
-BOOL long_symbolic_expr = FALSE;
+extern BOOL list_on_next;		/* listing to turn on or off */
+BOOL list_on;					/* listing on at the moment */
+extern char *cur_line;			/* points to line being lex'd */
+char list_buf[1024 + 80];		/* listing buffer */
+char list_buf2[1024 + 80];		/* listing buffer for two-line code */
+BOOL uses_buf2 = FALSE;			/* list_buf2 is alive */
+BOOL list_print_line = FALSE;	/* whether or not to print line in listing */
+char *spaces(), *luntab();
 
 struct n binary_op();
 struct n unary_op();
 struct n sym_ref();
 
-#define R_R6			0x0001
-#define R_R5			0x0002
-#define R_R4			0x0004
+#define R_R6				0x0001
+#define R_R5				0x0002
+#define R_R4				0x0004
 #define R_DATA_ALU_ACCUM	0x0008
-#define R_CTL_REG		0x0010
+#define R_CTL_REG			0x0010
 #define R_FUNKY_CTL_REG		0x0020
-#define R_SDX			0x0040
-#define R_SDY			0x0080
-#define R_LSD			0x0100
-#define R_AB			0x0200
-#define R_XREG			0x0400
-#define R_YREG			0x0800
+#define R_SDX				0x0040
+#define R_SDY				0x0080
+#define R_LSD				0x0100
+#define R_AB				0x0200
+#define R_XREG				0x0400
+#define R_YREG				0x0800
 /* registers to which short immediate move is an unsigned int */
-#define R_UINT			0x1000
+#define R_UINT				0x1000
 /* registers to which short immediate move is an signed frac */
-#define R_SFRAC			0x2000
+#define R_SFRAC				0x2000
 %}
 
 %union {
-	int ival;	/* integer value */
-	struct n n;	/* just like in struct sym */
-	double dval;	/* floating point value */
-	char *sval;	/* string */
-	int cval;	/* character */
-	char cond;	/* condition */
+	int ival;			/* integer value */
+	struct n n;			/* just like in struct sym */
+	double dval;		/* floating point value */
+	char *sval;			/* string */
+	int cval;			/* character */
+	char cond;			/* condition */
 	struct regs {
 		int r6, r5, r4, data_alu_accum, ctl_reg, funky_ctl_reg;
 		int sdx, sdy, lsd, ab, xreg, yreg;
@@ -95,7 +106,6 @@ struct n sym_ref();
 %token <sval> SYM
 %token <sval> STRING
 %token <cval> CHAR
-%token COMMENT
 %token XMEM
 %token YMEM
 %token LMEM
@@ -119,6 +129,7 @@ struct n sym_ref();
 %token LC
 %token EOL
 %token EOS
+%token LEXBAD
 
 %token OP_ABS
 %token OP_ADC
@@ -184,10 +195,13 @@ struct n sym_ref();
 %token OP_EQU
 %token OP_ORG
 %token OP_DC
+%token OP_DS
+%token OP_DSM
 %token OP_END
 %token OP_PAGE
 %token OP_PSECT
 %token OP_ALIGN
+%token OP_INT
 %token SHL
 %token SHR
 
@@ -200,13 +214,13 @@ struct n sym_ref();
 %type <ival> abs_addr abs_short_addr io_short_addr 
 %type <ival> a_b x_or_y ea b5_10111_max
 %type <ival> p6_ean_a6 ea_no_ext p6_ea_a6 ea_a6 ea_a12
-%type <ival> ea_no_ext 
 %type <ival> ea_short
 %type <ival> prog_ctl_reg
 %type <ival> op8_1 op8_2 op8_3 op8_4 op8_5 op8_6 op8_7 op8_8
 %type <ival> mpy_arg mpy_srcs plus_minus
 %type <ival> sd3
 %type <ival> funky_ctl_reg tcc_sd space
+%type <sval> opt_label
 
 %type <regs> regs
 %type <ea> movep_ea_pp
@@ -231,42 +245,65 @@ input	:	/* empty */
 
 statement
 	:	good_stuff EOL
-			{substatement = 0;
+			{
+			if(pass == 2 && list_on && list_print_line) {
+				printf(ldebug ? "\n(%s|%s)\n" : "%s%s\n",
+					list_buf, substatement == 0 ? luntab(cur_line) : "");
+				if(uses_buf2)
+					printf(ldebug ? "\n(%s|)\n" : "%s\n",
+						list_buf2);
+				list_buf[0] = list_buf2[0] = '\0';
+			}
+			curline++;
+			uses_buf2 = FALSE;
+			list_print_line = TRUE;
+			list_on = list_on_next;
+			substatement = 0;
 			if(NOT check_psect(seg, pc) && pass == 2)
 				yyerror("%04X: psect violation", pc);
 			}
 	|	good_stuff EOS
-			{substatement++;
+			{
+			if(pass == 2 && list_on && list_print_line) {
+				printf(ldebug ? "\n(%s" : "%s", list_buf);
+				if(substatement == 0)
+					printf(ldebug ? "|%s)\n" : "%s\n", luntab(cur_line));
+				else
+					printf(ldebug ? ")\n" : "\n");
+				if(uses_buf2)
+					printf(ldebug ? "\n(%s|)\n" : "%s\n",
+						list_buf2);
+				list_buf[0] = list_buf2[0] = '\0';
+			}
+			substatement++;
+			uses_buf2 = FALSE;
+			list_print_line = TRUE;
+			list_on = list_on_next;
 			if(NOT check_psect(seg, pc) && pass == 2)
 				yyerror("%04X: psect violation", pc);
 			}
-	|	error
+	|	error EOL
+			{curline++; substatement = 0;}
 	;
 
 good_stuff
 	:	/* empty */
-			{if(pass == 2 && list_on) {
-				printf("\n");
-			}}
+			{sprintf(list_buf, "%s", spaces(0));}
 	|	cpp_droppings
-	|	COMMENT
-			{if(pass == 2 && NOT substatement && list_on) {
-				printf("%s%s\n", spaces(0), luntab(inline));
-			}}
-	|	assembler_ops comment_field
+			{list_print_line = FALSE;}
+	|	assembler_ops
 			{long_symbolic_expr = FALSE;}
-	|	label_field operation_field comment_field
+	|	label_field operation_field
 			{char *printcode();
 			if(pass == 2) {
 				gencode(seg, pc, w0);
-				if(list_on) printf("%c:%04X %s %s\n", segs[seg], pc, 
-					printcode(w0), substatement ? "" :
-						luntab(inline));
+				sprintf(list_buf, "%c:%04X %s ", segs[seg], pc, printcode(w0));
 				pc++;
 				if(uses_w1) {
 					gencode(seg, pc, w1);
-					if(list_on) printf("%c:%04X %s\n", segs[seg], pc,
+					sprintf(list_buf2, "%c:%04X %s", segs[seg], pc,
 	       					printcode(w1 & 0xFFFFFF));
+					uses_buf2++;
 					pc++;
 				}
 			} else {
@@ -276,13 +313,11 @@ good_stuff
 			}
 			w0 = w1 = 0; uses_w1 = FALSE; 
 			long_symbolic_expr = FALSE;}
-	|	SYM comment_field
+	|	SYM 
 			{sym_def($1, INT, pc);
 			free($1);
-			if(pass == 2) {
-				if(list_on) printf("%c:%04X%s%s\n", segs[seg], pc, 
-					spaces(14-8), substatement ? "" :
-						luntab(inline));
+			if(pass == 2 && list_on) {
+				sprintf(list_buf, "%c:%04X%s", segs[seg], pc, spaces(14-8));
 			long_symbolic_expr = FALSE;
 			}}
 	;
@@ -291,7 +326,9 @@ cpp_droppings
 	:	'#' num STRING
 			{if(strlen($3) > 0)
 				curfile = $3;
-			curline = $2.val.i - 2;}
+			else
+				curfile = "<stdin>";
+			curline = $2.val.i - 1;}
 	;
 
 assembler_ops
@@ -300,14 +337,12 @@ assembler_ops
 			free($1);
 			if(pass == 2 && list_on) {
 				if($3.type == INT)
-					printf("%06X%s",
+					sprintf(list_buf, "%06X%s",
 						$3.val.i & 0xFFFFFF,
-						spaces(14-6-2));
+						spaces(14-8));
 				else
-					printf("%10g%s", $3.val.f,
-						spaces(14-10-2));
-				printf("%s\n", 
-					substatement ? "" : luntab(inline));
+					sprintf(list_buf, "%10g%s", $3.val.f,
+						spaces(14-4));
 			}}
 	|	OP_ALIGN expr
 			{int ival = n2int($2);
@@ -320,8 +355,8 @@ assembler_ops
 					pc += ival - pc % ival;
 			}
 			if(pass == 2 && list_on)
-				printf("%c:%04X%s%s\n", segs[seg], pc, 
-					spaces(14-8), substatement ? "" : luntab(inline));
+				sprintf(list_buf, "%c:%04X%s", segs[seg], pc, 
+					spaces(14-8));
 			}
 	|	OP_PSECT SYM
 			{struct psect *pp = find_psect($2);
@@ -332,46 +367,64 @@ assembler_ops
 				seg = pp->seg;
 				pc = pp->pc;
 				set_psect(pp);
-				if(pass == 2 && list_on) 
-					printf("%c:%04X%s%s\n", segs[seg], pc, 
-						spaces(14-8), substatement ? "" : luntab(inline));
+				if(pass == 2 && list_on)
+					sprintf(list_buf, "%c:%04X%s", segs[seg], pc,
+						spaces(14-8));
 			}
 			free($2);}
 	|	OP_PSECT SYM space expr ':' expr
 			{new_psect($2, $3, n2int($4), n2int($6));
-			if(pass == 2 && list_on) 
-				printf("%c:%04X %04X%s%s\n", 
-					segs[$3], n2int($4), n2int($6), spaces(14-8+4+1), 
-					substatement ? "" : luntab(inline));
+			if(pass == 2 && list_on)
+				sprintf(list_buf, "%c:%04X %04X%s", 
+					segs[$3], n2int($4), n2int($6), spaces(14-8+4+1));
 			}
 	|	OP_ORG space expr
 			{pc = n2int($3);
 			seg = $2;
-			if(pass == 2 && list_on) 
-				printf("%c:%04X%s%s\n", segs[seg], pc, 
-					spaces(14-8), substatement ? "" : luntab(inline));
+			if(pass == 2 && list_on)
+				sprintf(list_buf, "%c:%04X%s", segs[seg], pc, 
+					spaces(14-8));
 			}
 	|	OP_ORG space expr ',' space expr
 			{pc = n2int($3);
 			seg = $2;
 			if(pass == 2 && list_on)
-				printf("%c:%04X%s%s\n", segs[seg], pc, 
-					spaces(14-8), substatement ? "" : luntab(inline));
+				sprintf(list_buf, "%c:%04X%s", segs[seg], pc, 
+					spaces(14-8));
 			}
 	|	label_field OP_DC dc_list
+	|	label_field OP_DS expr
+			{pc += n2int($3);
+			}
+	|	opt_label OP_DSM expr
+			{int size = n2int($3);
+			if(size)
+			{    int align = 1;
+			     while(align < size)
+				 align <<= 1;
+			     pc += (align - (pc % align));
+			}
+			if($1)
+			{   sym_def($1, INT, pc);
+ 			    free($1);
+			}
+			pc += size;
+			}
 	|	OP_PAGE num ',' num ',' num ',' num
-			{if(pass == 2 && NOT substatement && list_on) {
-				printf("%s%s\n", spaces(0), luntab(inline));
+			{if(pass == 2 && list_on) {
+				sprintf(list_buf, "%s", spaces(0));
 			}}
 	|	OP_INCLUDE STRING
-			{if(pass == 2 && NOT substatement && list_on) {
-				printf("%s%s\n", spaces(0), luntab(inline));
+			{if(pass == 2 && list_on) {
+				printf(ldebug ? "\n(%s|%s)\n" : "%s%s\n",
+					spaces(0), luntab(cur_line));
+				list_print_line = FALSE;
 			}
 			include($2); /* free($2); */
 			}
 	|	OP_END
-			{if(pass == 2 && NOT substatement && list_on) {
-				printf("%s%s\n", spaces(0), luntab(inline));
+			{if(pass == 2 && list_on) {
+				sprintf(list_buf, "%s", spaces(0));
 			}}
 	;
 
@@ -389,12 +442,10 @@ dc_stuff
 				w0 |= (*cp & 0xFF) << (2 - (i % 3)) * 8;
 				if(i % 3 == 2 || i == len - 1) {
 					if(pass == 2) {
-						if(list_on) printf("%c:%04X %06X%s%s\n",
+						if(list_on) sprintf(list_buf, "%c:%04X %06X%s",
 							segs[seg], pc, w0, 
-							spaces(14-6+5), 
-							substatement ? "" : luntab(inline));
+							spaces(14-6+5));
 						gencode(seg, pc, w0);
-						substatement++;
 					}
 					pc++; w0 = 0;
 				}
@@ -404,15 +455,10 @@ dc_stuff
 			{int frac = n2frac($1);
 			if(pass == 2) {
 				if(list_on) {
-					printf("%c:%04X ", segs[seg], pc);
-					printf("%06X%s", 
-						frac & 0xFFFFFF,
-							spaces(14-6+5));
-					printf("%s\n",
-						substatement ? "" : luntab(inline));
+					sprintf(list_buf, "%c:%04X %06X%s", segs[seg], pc, 
+						frac & 0xFFFFFF, spaces(14-6+5));
 				}
 				gencode(seg, pc, frac);
-				substatement++;
 			}
 			pc++;}
 
@@ -433,15 +479,15 @@ label_field
 	|	/* empty */
 	;
 
+opt_label
+	:	SYM		{$$ = $1;}
+	|	/* empty */	{$$ = NULL;}
+	;
+
 operation_field
 	:	operation
 			{if(just_rep) 
 				just_rep--;}
-	;
-
-comment_field
-	:	COMMENT
-	|	/* empty */
 	;
 
 operation
@@ -788,6 +834,7 @@ control_args
 			{w0 |= 0x00C000 | $1 << 0 | $3.r6 << 8;
 			uses_w1++;
 			w1 = $5;}
+	;
 
 p6_ean_a6
 	:	abs_addr	/* in pass 2 can always discern size. */
@@ -902,19 +949,25 @@ sd3	:	regs /* XREG */ ',' regs /* a_b */
 
 movec_args
 	:	x_or_y ea ',' regs /* ctl_reg */
-			{if($1 == 0) {
+			{if(NOT ($4.flags & R_CTL_REG))
+				yyerror("bad MOVEC target register");
+			if($1 == 0) {
 				w0 |= 0x05C020 | $4.ctl_reg;
 			} else {
 				w0 |= 0x05C060 | $4.ctl_reg;
 			}}
 	|	regs /* ctl_reg */ ',' x_or_y ea
-			{if($3 == 0) {
+			{if(NOT ($1.flags & R_CTL_REG))
+				yyerror("bad MOVEC source register");
+			if($3 == 0) {
 				w0 |= 0x054020 | $1.ctl_reg;
 			} else {
 				w0 |= 0x054060 | $1.ctl_reg;
 			}}
 	|	ix ',' regs /* ctl_reg */
 			{int ival = n2int($1);
+			if(NOT ($3.flags & R_CTL_REG))
+				yyerror("bad MOVEC target register");
 			if(ival < 256 && NOT long_symbolic_expr) {
 				w0 |= 0x0500A0 | (ival & 0xFF) << 8 | $3.ctl_reg; 
 			} else {
@@ -927,6 +980,8 @@ movec_args
 			} else {
 				w0 |= 0x058060 | ($2 & 0x3F) << 8 | $4.ctl_reg;
 			}
+			if(NOT ($4.flags & R_CTL_REG))
+				yyerror("bad MOVEC target register");
 			if($2 > 0x003F && pass == 2)
 				yyerror("warning: address operand truncated");
 			}
@@ -936,6 +991,8 @@ movec_args
 			} else {
 				w0 |= 0x050060 | ($4 & 0x3F) << 8 | $1.ctl_reg;
 			}
+			if(NOT ($1.flags & R_CTL_REG))
+				yyerror("bad MOVEC source register");
 			if($4 > 0x003F && pass == 2)
 				yyerror("warning: address operand truncated");
 			}
@@ -1243,7 +1300,7 @@ i_move  :	ix ',' regs
 				yyerror("please use MOVEC for control register moves");
 				break;
 			}
-			if($3.flags & R_SFRAC && $1.type == FLT) {
+			if(($3.flags & R_SFRAC) && $1.type == FLT) {
 				if((frac & 0xFFFF) == 0 && 
 					NOT long_symbolic_expr) {
 					value = frac >> 16;
@@ -1252,7 +1309,7 @@ i_move  :	ix ',' regs
 					value = frac;
 				}
 			} else {
-				if(ival <= 0xFF && NOT long_symbolic_expr) {
+				if(ival <= 0xFF && ival >= -0xFF && NOT long_symbolic_expr) {
 					value = ival;
 					shortform++;
 				} else {
@@ -1512,15 +1569,11 @@ ix_long	:	'#' '>' expr
 abs_addr
 	:	expr
 			{$$ = n2int($1);}
-	|	'*'
-			{$$ = pc;}
 	;
 
 abs_short_addr
 	:	'<' expr
 			{$$ = n2int($2);}
-	|	'<' '*'
-			{$$ = pc;}
 	;
 
 io_short_addr
@@ -1533,6 +1586,8 @@ num_or_sym
 			{$$ = $1;}
 	|	SYM
 			{$$ = sym_ref($1); free($1);}
+	|	io_short_addr
+			{$$.type = INT; $$.val.i = $1;}
 	;
 
 num_or_sym_expr
@@ -1542,9 +1597,19 @@ num_or_sym_expr
 			{$$ = sym_ref($1); free($1); long_symbolic_expr++;}
 	|	CHAR
 			{$$.type = INT; $$.val.i = $1 & 0xFFFFFF;}
+	|	'*'
+			{$$.type = INT; $$.val.i = pc;}
 	;
 
-expr	:	expr '|' expr
+expr
+	:	OP_INT '(' expr ')'
+			{$$.type = INT; 
+				if($3.type == INT)
+					$$.val.i = $3.val.i;
+				else
+					$$.val.i = $3.val.f;
+			}
+	|	expr '|' expr
 			{$$ = binary_op($1, '|', $3);}
 	|	expr '^' expr
 			{$$ = binary_op($1, '^', $3);}
@@ -1586,117 +1651,119 @@ struct n binary_op(a1, op, a2)
 struct n a1, a2;
 int op;
 {
-    struct n result;
+	struct n result;
 
-    if(a1.type == UNDEF || a2.type == UNDEF) {
-	result.type = UNDEF;
-	return result;
-    }
+	if(a1.type == UNDEF || a2.type == UNDEF) {
+		result.type = UNDEF;
+		return result;
+	}
 
-    /* promote to float automatically */
+	/* promote to float automatically */
 
-    if(a1.type != a2.type) {
-	if(a1.type == INT) {
-	    a1.val.f = a1.val.i;	/* truncate */
-	    a1.type = FLT;
+	if(a1.type != a2.type) {
+		if(a1.type == INT) {
+			a1.val.f = a1.val.i;		/* truncate */
+			a1.type = FLT;
+		} else {
+			a2.val.f = a2.val.i;		/* truncate */
+		}
+	}
+	result.type = a1.type;
+
+	/* do the op */
+
+	if(result.type == INT) {
+		switch(op) {
+			case '+':		result.val.i = a1.val.i + a2.val.i; break;
+			case '-':		result.val.i = a1.val.i - a2.val.i; break;
+			case '*':		result.val.i = a1.val.i * a2.val.i; break;
+			case '/':		result.val.i = a1.val.i / a2.val.i; break;
+			case '%':		result.val.i = a1.val.i % a2.val.i; break;
+			case SHL:		result.val.i = a1.val.i << a2.val.i; break;
+			case SHR:		result.val.i = a1.val.i >> a2.val.i; break;
+			case '|':		result.val.i = a1.val.i | a2.val.i; break;
+			case '&':		result.val.i = a1.val.i & a2.val.i; break;
+			case '^':		result.val.i = a1.val.i ^ a2.val.i; break;
+		}
 	} else {
-	    a2.val.f = a2.val.i;	/* truncate */
+		switch(op) {
+			case '+':		result.val.f = a1.val.f + a2.val.f; break;
+			case '-':		result.val.f = a1.val.f - a2.val.f; break;
+			case '*':		result.val.f = a1.val.f * a2.val.f; break;
+			case '/':		result.val.f = a1.val.f / a2.val.f; break;
+			case '%':		result.val.f = (int)a1.val.f % (int)a2.val.f; break;
+			case SHL:		result.val.f = (int)a1.val.f << (int)a2.val.f; break;
+			case SHR:		result.val.f = (int)a1.val.f >> (int)a2.val.f; break;
+			case '|':		result.val.f = (int)a1.val.f | (int)a2.val.f; break;
+			case '&':		result.val.f = (int)a1.val.f & (int)a2.val.f; break;
+			case '^':		result.val.f = (int)a1.val.f ^ (int)a2.val.f; break;
+		}
 	}
-    }
-    result.type = a1.type;
 
-    /* do the op */
-
-    if(result.type == INT) {
-	switch(op) {
-	    case '+':	result.val.i = a1.val.i + a2.val.i; break;
-	    case '-':	result.val.i = a1.val.i - a2.val.i; break;
-	    case '*':	result.val.i = a1.val.i * a2.val.i; break;
-	    case '/':	result.val.i = a1.val.i / a2.val.i; break;
-	    case '%':	result.val.i = a1.val.i % a2.val.i; break;
-	    case SHL:	result.val.i = a1.val.i << a2.val.i; break;
-	    case SHR:	result.val.i = a1.val.i >> a2.val.i; break;
-	    case '|':	result.val.i = a1.val.i | a2.val.i; break;
-	    case '&':	result.val.i = a1.val.i & a2.val.i; break;
-	    case '^':	result.val.i = a1.val.i ^ a2.val.i; break;
-	}
-    } else {
-	switch(op) {
-	    case '+':	result.val.f = a1.val.f + a2.val.f; break;
-	    case '-':	result.val.f = a1.val.f - a2.val.f; break;
-	    case '*':	result.val.f = a1.val.f * a2.val.f; break;
-	    case '/':	result.val.f = a1.val.f / a2.val.f; break;
-	    case '%':	result.val.f = (int)a1.val.f % (int)a2.val.f; break;
-	    case SHL:	result.val.f = (int)a1.val.f << (int)a2.val.f; break;
-	    case SHR:	result.val.f = (int)a1.val.f >> (int)a2.val.f; break;
-	    case '|':	result.val.f = (int)a1.val.f | (int)a2.val.f; break;
-	    case '&':	result.val.f = (int)a1.val.f & (int)a2.val.f; break;
-	    case '^':	result.val.f = (int)a1.val.f ^ (int)a2.val.f; break;
-	}
-    }
-
-    return result;
+	return result;
 }
 
 struct n unary_op(op, a1)
 int op;
 struct n a1;
 {
-    struct n result;
+	struct n result;
 
-    if(a1.type == UNDEF) {
-	result.type = UNDEF;
+	if(a1.type == UNDEF) {
+		result.type = UNDEF;
+		return result;
+	}
+
+	result.type = a1.type;
+
+	/* do the op */
+
+	if(result.type == INT) {
+		switch(op) {
+			case '-':		result.val.i = -a1.val.i; break;
+			case '~':		result.val.i = ~a1.val.i; break;
+		}
+	} else {
+		switch(op) {
+			case '-':		result.val.f = -a1.val.f; break;
+			case '~':		result.val.f = ~(int)a1.val.f; break;
+		}
+	}
+
 	return result;
-    }
-
-    result.type = a1.type;
-
-    /* do the op */
-
-    if(result.type == INT) {
-	switch(op) {
-	    case '-':	result.val.i = -a1.val.i; break;
-	    case '~':	result.val.i = ~a1.val.i; break;
-	}
-    } else {
-	switch(op) {
-	    case '-':	result.val.f = -a1.val.f; break;
-	    case '~':	result.val.f = ~(int)a1.val.f; break;
-	}
-    }
-
-    return result;
 }
 
 n2int(n)
 struct n n;
 {
-    if(n.type == UNDEF)
-	return UNDEF;
-    else if(n.type == INT)
-	return n.val.i;
-    else
-	return n.val.f;
+	if(n.type == UNDEF)
+		return UNDEF;
+	else if(n.type == INT)
+		return n.val.i;
+	else
+		return n.val.f;
 }
 
 n2frac(n)
 struct n n;
 {
-    double adval = n.val.f >= 0.0 ? n.val.f : -n.val.f;
+	double adval = n.val.f >= 0.0 ? n.val.f : -n.val.f;
 
-    if(n.type == UNDEF)
-	return UNDEF;
-    else if(n.type == INT)
-	return n.val.i;
+	if(n.type == UNDEF)
+		return UNDEF;
+	else if(n.type == INT)
+		return n.val.i;
+	else if(n.val.f == -1.0)
+		return 0x800000;
 
-    adval -= (double)(int)adval;
-    adval *= (double)0x800000;
-    adval += 0.5;
+	adval -= (double)(int)adval;
+	adval *= (double)0x800000;
+	adval += 0.5;
 
-    if(n.val.f >= 0.0)
-	return adval;
-    else
-	return -adval;
+	if(n.val.f >= 0.0)
+		return adval;
+	else
+		return -adval;
 }
 
 extern struct {int n; char *name;} tok_tab[];
@@ -1705,49 +1772,52 @@ extern int n_tok;
 char *tok_print(tok)
 int tok;
 {
-    int i;
-    static char buf[32];
+	int i;
+	static char buf[32];
 
-    if(tok < 256) {
-	sprintf(buf, "'%c'", tok);
-	return(buf);
-    } else {
-	for(i = 0; i < n_tok; i++) {
-	    if(tok == tok_tab[i].n)
-		return(tok_tab[i].name);
+	if(tok < 256) {
+		sprintf(buf, tok < ' ' ? "\\z%02X" : "%c", tok & 0xFF);
+		return buf;
+	} else {
+		for(i = 0; i < n_tok; i++) {
+			if(tok == tok_tab[i].n)
+				return tok_tab[i].name;
+		}
 	}
-    }
-    return("<unknown>");
+	return "*bogus*";
 }
 
 yyerror(s, a0, a1, a2, a3)
 char *s, *a0, *a1, *a2, *a3;
 {
-    extern int error;
-    char buf[1024];
+	extern int error;
+	char buf[1024];
 
-    error++;
-    sprintf(buf, s, a0, a1, a2, a3);
+	error++;
+	sprintf(buf, s, a0, a1, a2, a3);
 
-    if(pass == 2) {
-	fprintf(stderr, "%s: line %d: %s (tok=%s)\n", curfile, curline,
-	    buf, tok_print(yychar));
-	fprintf(stderr, "%s\n", inline); 
-	printf("%s: line %d: %s (tok=%s)\n", curfile, curline,
-	    buf, tok_print(yychar));
-#if 0
-	printf("%s\n", inline); 
-#endif
-    }
+	if(pass == 2) {
+		fprintf(stderr, "%s: line %d: %s (tok=%s)\n", curfile, curline,
+			buf, tok_print(yychar));
+		fprintf(stderr, "%s\n", cur_line);
+		printf("%s: line %d: %s (tok=%s)\n", curfile, curline,
+			buf, tok_print(yychar));
+	}
 }
 
 char *luntab(s)
 char *s;
 {
-    static char buf[256];
+	static char buf[1024];
+	int p;
 
-    strcpy(buf, s);
+	strcpy(buf, s);
 
-    untab(buf);
-    return(buf);
+	untab(buf);
+	p = strlen(buf);
+
+	if(buf[p - 1] == '\n')
+		buf[p - 1] = '\0';
+
+	return buf;
 }

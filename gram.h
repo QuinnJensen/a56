@@ -1,11 +1,11 @@
 
 typedef union  {
-	int ival;	/* integer value */
-	struct n n;	/* just like in struct sym */
-	double dval;	/* floating point value */
-	char *sval;	/* string */
-	int cval;	/* character */
-	char cond;	/* condition */
+	int ival;			/* integer value */
+	struct n n;			/* just like in struct sym */
+	double dval;		/* floating point value */
+	char *sval;			/* string */
+	int cval;			/* character */
+	char cond;			/* condition */
 	struct regs {
 		int r6, r5, r4, data_alu_accum, ctl_reg, funky_ctl_reg;
 		int sdx, sdy, lsd, ab, xreg, yreg;
@@ -37,30 +37,30 @@ extern YYSTYPE yylval;
 # define SYM 273
 # define STRING 274
 # define CHAR 275
-# define COMMENT 276
-# define XMEM 277
-# define YMEM 278
-# define LMEM 279
-# define PMEM 280
-# define AAAA 281
-# define A10 282
-# define BBBB 283
-# define B10 284
-# define AABB 285
-# define BBAA 286
-# define XXXX 287
-# define YYYY 288
-# define SR 289
-# define MR 290
-# define CCR 291
-# define OMR 292
-# define SP 293
-# define SSH 294
-# define SSL 295
-# define LA 296
-# define LC 297
-# define EOL 298
-# define EOS 299
+# define XMEM 276
+# define YMEM 277
+# define LMEM 278
+# define PMEM 279
+# define AAAA 280
+# define A10 281
+# define BBBB 282
+# define B10 283
+# define AABB 284
+# define BBAA 285
+# define XXXX 286
+# define YYYY 287
+# define SR 288
+# define MR 289
+# define CCR 290
+# define OMR 291
+# define SP 292
+# define SSH 293
+# define SSL 294
+# define LA 295
+# define LC 296
+# define EOL 297
+# define EOS 298
+# define LEXBAD 299
 # define OP_ABS 300
 # define OP_ADC 301
 # define OP_ADD 302
@@ -125,9 +125,12 @@ extern YYSTYPE yylval;
 # define OP_EQU 361
 # define OP_ORG 362
 # define OP_DC 363
-# define OP_END 364
-# define OP_PAGE 365
-# define OP_PSECT 366
-# define OP_ALIGN 367
-# define SHL 368
-# define SHR 369
+# define OP_DS 364
+# define OP_DSM 365
+# define OP_END 366
+# define OP_PAGE 367
+# define OP_PSECT 368
+# define OP_ALIGN 369
+# define OP_INT 370
+# define SHL 371
+# define SHR 372

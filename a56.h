@@ -4,12 +4,11 @@
  *
  *  Written by Quinn C. Jensen
  *  July 1990
- *  jensenq@npd.novell.com (or jensenq@qcj.icon.com)
  *
  *******************************************************\
 
 /*
- * Copyright (C) 1990-1992 Quinn C. Jensen
+ * Copyright (C) 1990-1994 Quinn C. Jensen
  *
  * Permission to use, copy, modify, distribute, and sell this software
  * and its documentation for any purpose is hereby granted without fee,
@@ -71,6 +70,8 @@ extern int inc_p;
 #define curfile inc[inc_p].file
 #define curline inc[inc_p].line
 
+extern int ldebug;
+
 struct psect {
     char *name;
     int seg;
@@ -86,3 +87,6 @@ FILE *open_read(), *open_write(), *open_append();
 
     /* after a call to fgets(), remove the newline character */
 #define rmcr(s) {if (s[strlen(s)-1] == '\n') s[strlen(s)-1] = '\0';};
+
+#define ASSERT(expr, str) \
+	if(expr) fprintf(stderr, "ASSERT: %s: line %d: %s\n", __FILE__, __LINE__, str);
