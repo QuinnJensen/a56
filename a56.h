@@ -35,35 +35,37 @@ typedef int BOOL;
 #endif
 
 struct sym {
-    char *name;
-    struct n {
-	int type;
+	char *name;
+	struct n {
+		short type;
 #define UNDEF -1
 #define INT 0
 #define FLT 1
-	union val {
-	    int i;
-	    double f;
-        } val;
-    } n;
-    struct sym *next;
+		short seg;
+#define NONE 0
+#define PROG 1
+#define XDATA 2
+#define YDATA 3
+#define LDATA 4
+#define ANY 5
+		union val {
+			int i;
+			double f;
+		} val;
+	} n;
+	struct sym *next;
 } *find_sym();
 
 extern int pass;
 
 #define NEW(object) ((object *)alloc(sizeof(object)))
 
-#define PROG 0
-#define XDATA 1
-#define YDATA 2
-#define LDATA 3
-
-#define MAX_NEST 20	/* maximum include file nesting */
+#define MAX_NEST 20		/* maximum include file nesting */
 
 struct inc {
-    char *file;
-    FILE *fp;
-    int line;
+	char *file;
+	FILE *fp;
+	int line;
 };
 extern struct inc inc[];
 extern int inc_p;
@@ -73,20 +75,20 @@ extern int inc_p;
 extern int ldebug;
 
 struct psect {
-    char *name;
-    int seg;
-    unsigned int pc, bottom, top;
-    struct psect *next;
+	char *name;
+	int seg;
+	unsigned int pc, bottom, top;
+	struct psect *next;
 } *find_psect(), *new_psect();
 
 FILE *open_read(), *open_write(), *open_append();
 
-    /* save string s somewhere */
+	/* save string s somewhere */
 #define strsave(s) ((s) != NULL ? \
-	(char *)strcpy((char *)malloc(strlen(s)+1),(s)) : NULL)
+		(char *)strcpy((char *)malloc(strlen(s)+1),(s)) : NULL)
 
-    /* after a call to fgets(), remove the newline character */
+	/* after a call to fgets(), remove the newline character */
 #define rmcr(s) {if (s[strlen(s)-1] == '\n') s[strlen(s)-1] = '\0';};
 
 #define ASSERT(expr, str) \
-	if(expr) fprintf(stderr, "ASSERT: %s: line %d: %s\n", __FILE__, __LINE__, str);
+		if(expr) fprintf(stderr, "ASSERT: %s: line %d: %s\n", __FILE__, __LINE__, str);

@@ -34,33 +34,37 @@ main(argc,argv)
 int argc;
 char *argv[];
 {
-    char buf[MAX];
-    int curaddr = 0;
-    int line = 0;
+	char buf[MAX];
+	int curaddr = 0;
+	int line = 0;
 
-    while(gets(buf)) {
-	char seg;
-	int addr, data;
-	line++;
-	if(sscanf(buf, "%c%x%x", &seg, &addr, &data) == 3) {
-	    if(addr < curaddr) {
-		fatal("%s: input line %d: can't go back\n", argv[0], line);
-	    } else if(addr != curaddr) {
-		while(curaddr < addr) {
-		    putword(0);
-		    curaddr++;
+	while(gets(buf)) {
+		char seg;
+		int addr, data;
+		line++;
+		if(sscanf(buf, "%c%x%x", &seg, &addr, &data) == 3) {
+			if(seg == 'I') {
+				break;
+			} else {
+				if(addr < curaddr) {
+					fatal("%s: input line %d: can't go back\n", argv[0], line);
+				} else if(addr != curaddr) {
+					while(curaddr < addr) {
+						putword(0);
+						curaddr++;
+					}
+				}
+				putword(data);
+				curaddr++;
+			}
 		}
-	    }
-	    putword(data);
-	    curaddr++;
 	}
-    }
 }
 
 putword(data)
 int data;
 {
-    putchar(data >>  0 & 0xFF);
-    putchar(data >>  8 & 0xFF);
-    putchar(data >> 16 & 0xFF);
+	putchar(data >>  0 & 0xFF);
+	putchar(data >>  8 & 0xFF);
+	putchar(data >> 16 & 0xFF);
 }

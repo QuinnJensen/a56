@@ -31,7 +31,7 @@ static char *Copyright = "Copyright (C) 1990-1994 Quinn C. Jensen";
 #define MAX 1024
 
 int pass;
-int error;
+int error, warning;
 extern unsigned long pc;
 extern int seg;
 BOOL binary_listing = FALSE;
@@ -51,6 +51,7 @@ char *argv[];
 	int c;
 	char *output_file = "a56.out";
 	char *input_file;
+	char *usage = "usage: a56  [-b]  [-l]  [-d]  [-o output-file]  input-file\n";
 
 	while((c = getopt(argc, argv, "bldo:")) != EOF) switch (c) {
 		case 'b':
@@ -67,9 +68,10 @@ char *argv[];
 			break;
 		case '?':
 		default:
-			fatal("usage: a56  [-b]  [-l]  [-d]  [-o output-file]  input-file\n");
+			fatal(usage);
 	}
 	input_file = argv[optind++];
+	if(input_file == NULL) fatal(usage);
 	obj = open_write(output_file);
 
 	pc = 0;
@@ -88,6 +90,7 @@ char *argv[];
 	dump_symtab();
 	fclose(obj);
 	printf("errors=%d\n", error);
+	printf("warnings=%d\n", warning);
 	return error ? 1 : 0;
 }
 
@@ -169,9 +172,10 @@ char *sym;
 
 struct sym *symtab[HASHSIZE];
 
-sym_def(sym, type, i, f)
+sym_def(sym, type, seg, i, f)
 char *sym;
 int type;
+int seg;
 int i;
 double f;
 {
@@ -190,6 +194,7 @@ double f;
 		*stop = sp;
 		sp->name = strsave(sym);
 		sp->n.type = type;
+		sp->n.seg = seg;
 		if(type == INT)
 			sp->n.val.i = i & 0xFFFFFF;
 		else
@@ -218,6 +223,7 @@ char *sym;
 	return NULL;
 }
 
+extern char segs[];
 dump_symtab()
 {
 	struct sym *sp, **stop;
@@ -227,16 +233,19 @@ dump_symtab()
 Symbol Table\n\
 -------------------------------------\n");
 /*
-SSSSSSSSSSSSSSSS XXXXXX
-SSSSSSSSSSSSSSSS DDDDDDDDD.DDDDDDDDDD
+SSSSSSSSSSSSSSSS S XXXXXX
+SSSSSSSSSSSSSSSS S DDDDDDDDD.DDDDDDDDDD
 */
 
 	for(i = 0, stop = symtab; i < HASHSIZE; i++, stop++) {
 		for(sp = *stop; sp; sp = sp->next) {
-			if(sp->n.type == INT)
-				printf("%16s %06X\n", sp->name, sp->n.val.i);
-			else
-				printf("%16s %.10f\n", sp->name, sp->n.val.f);
+			if(sp->n.type == INT) {
+				printf("%16s %c %06X\n", sp->name, segs[sp->n.seg], sp->n.val.i);
+				fprintf(obj, "I %06X %s\n", sp->n.val.i, sp->name);
+			} else {
+				printf("%16s %c %.10f\n", sp->name, segs[sp->n.seg], sp->n.val.f);
+				fprintf(obj, "F %.10f %s\n", sp->n.val.f, sp->name);
+			}
 		}
 	}   
 }
@@ -384,12 +393,14 @@ SSSSSSSSSSSSSSSSSSSSSSSS  X  FFFF FFFF FFFF 99999 100%  99999 100%  99999
 summarize(pp)
 struct psect *pp;
 {
-	int used = pp->pc - pp->bottom;
-	int avail = pp->top - pp->pc;
-	int of = pp->top - pp->bottom;
+	int used, avail, of;
 
 	if(pp == NULL)
 		return;
+
+	used = pp->pc - pp->bottom;
+	avail = pp->top - pp->pc;
+	of = pp->top - pp->bottom;
 
 	summarize(pp->next);
 

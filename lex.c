@@ -61,16 +61,19 @@ yylex()
 		break;
 	case CHEX:
 		yylval.n.type = INT;
+		yylval.n.seg = ANY;
 		yylval.n.val.i = strtol(tok, 0, 16);
 		RET(CHEX);
 		break;
 	case CDEC:
 		yylval.n.type= INT;
+		yylval.n.seg = ANY;
 		yylval.n.val.i = atoi(tok);
 		RET(CDEC);
 		break;
 	case FRAC:
 		yylval.n.type = FLT;
+		yylval.n.seg = ANY;
 		yylval.n.val.f = atof(tok);
 		RET(FRAC);
 	case CHAR:

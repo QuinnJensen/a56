@@ -14,7 +14,7 @@
 CC = cc
 HOSTCC = cc
 YACC = yacc
-CCDEFS =
+CCDEFS = -DLDEBUG
 MV = mv
 YTABC = y.tab.c
 YTABH = y.tab.h
@@ -53,6 +53,7 @@ POSTPROCESS = echo
 #######################################################
 
 # -O or -g
+#DEBUG = -O -Olimit 3000
 DEBUG = -O
 
 SRCS = main.c a56.y lex.c subs.c getopt.c kparse.key
@@ -66,7 +67,7 @@ CFLAGS = $(DEBUG) $(DEFINES)
 all:	keybld a56 toomf
 
 a56:	$(OBJS)
-	$(CC) $(CFLAGS) -o a56 $(OBJS)
+	$(CC) $(CFLAGS) -o a56 $(OBJS) -lm
 	@$(POSTPROCESS) a56
 
 keybld:	keybld.o ksubs.o
@@ -100,6 +101,9 @@ y.output:	a56.y
 toomf:	toomf.o
 	$(CC) -o toomf $(CFLAGS) toomf.o
 	@$(POSTPROCESS) toomf
+
+torom:	torom.o subs.o
+	$(CC) -o torom $(CFLAGS) torom.o subs.o
 
 tape:	toktab.c
 	csh -c 'tar cvbf 1 - `cat files` | gzip > a56.tar.gz'

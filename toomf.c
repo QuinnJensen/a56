@@ -35,25 +35,26 @@ main(argc,argv)
 int argc;
 char *argv[];
 {
-    char buf[MAX];
-    int curaddr = 0;
-    int line = 0;
-    int curseg = '\0';
-    int startaddr = -1;
+	char buf[MAX];
+	int curaddr = 0;
+	int line = 0;
+	int curseg = '\0';
+	int startaddr = -1;
 
-    while(gets(buf)) {
-	char seg;
-	int addr, data;
-	line++;
-	if(sscanf(buf, "%c%x%x", &seg, &addr, &data) == 3) {
-	    if(seg != curseg || curaddr != addr) {
-		printf("\n_DATA %c %04X\n", curseg = seg, curaddr = addr);
-	    }   
-	    if(startaddr == -1 && seg == 'P')
-		startaddr = addr;
-	    printf("%06X ", data & 0xFFFFFF);
-	    curaddr++;
+	while(gets(buf)) {
+		char seg;
+		int addr, data;
+		line++;
+		if(sscanf(buf, "%c%x%x", &seg, &addr, &data) == 3) {
+			if(seg == 'I' || seg == 'F') break;
+			if(seg != curseg || curaddr != addr) {
+				printf("\n_DATA %c %04X\n", curseg = seg, curaddr = addr);
+			}   
+			if(startaddr == -1 && seg == 'P')
+				startaddr = addr;
+			printf("%06X ", data & 0xFFFFFF);
+			curaddr++;
+		}
 	}
-    }
-    printf("\n_END %04X\n", startaddr);
+	printf("\n_END %04X\n", startaddr);
 }
