@@ -10,7 +10,7 @@
  *******************************************************\
 
 /*
- * Copyright (C) 1990, 1991 Quinn C. Jensen
+ * Copyright (C) 1990-1992 Quinn C. Jensen
  *
  * Permission to use, copy, modify, distribute, and sell this software
  * and its documentation for any purpose is hereby granted without fee,
@@ -28,6 +28,11 @@
  *  Note:  This module requires a "BIG" version of YACC.  I had to
  *  recompile YACC in the largest mode available.
  *
+ *  Other notes:
+ *
+ *  MOVEC, MOVEM and MOVEP must be used explicitly--MOVE can't yet figure
+ *  out which form to use.
+ *
  */
 
 #include "a56.h"
@@ -40,6 +45,11 @@ char *spaces(), *luntab();
 char segs[] = "PXYL";
 int seg;
 int substatement = 0;
+BOOL long_symbolic_expr = FALSE;
+
+struct n binary_op();
+struct n unary_op();
+struct n sym_ref();
 
 #define R_R6			0x0001
 #define R_R5			0x0002
@@ -53,10 +63,16 @@ int substatement = 0;
 #define R_AB			0x0200
 #define R_XREG			0x0400
 #define R_YREG			0x0800
+/* registers to which short immediate move is an unsigned int */
+#define R_UINT			0x1000
+/* registers to which short immediate move is an signed frac */
+#define R_SFRAC			0x2000
 %}
 
 %union {
 	int ival;	/* integer value */
+	struct n n;	/* just like in struct sym */
+	double dval;	/* floating point value */
 	char *sval;	/* string */
 	int cval;	/* character */
 	char cond;	/* condition */
@@ -72,7 +88,8 @@ int substatement = 0;
 	} ea;
 }
 
-%token <ival> CHEX CDEC FRAC AREG BREG MREG NREG RREG XREG YREG
+%token <n> CHEX CDEC FRAC 
+%token <ival> AREG BREG MREG NREG RREG XREG YREG
 %token <ival> OP OPA OPP
 %token <cond> OP_JCC OP_JSCC OP_TCC
 %token <sval> SYM
@@ -170,25 +187,30 @@ int substatement = 0;
 %token OP_END
 %token OP_PAGE
 %token OP_PSECT
+%token OP_ALIGN
 %token SHL
 %token SHR
 
-%type <ival> num num_or_sym abs_addr abs_short_addr io_short_addr 
-%type <ival> num_or_sym_expr
+%type <n> num num_or_sym 
+%type <n> num_or_sym_expr
+%type <n> expr
+%type <n> ix
+%type <n> ix_long
+
+%type <ival> abs_addr abs_short_addr io_short_addr 
 %type <ival> a_b x_or_y ea b5_10111_max
 %type <ival> p6_ean_a6 ea_no_ext p6_ea_a6 ea_a6 ea_a12
 %type <ival> ea_no_ext 
 %type <ival> ea_short
 %type <ival> prog_ctl_reg
-%type <ival> ix ix_long
 %type <ival> op8_1 op8_2 op8_3 op8_4 op8_5 op8_6 op8_7 op8_8
 %type <ival> mpy_arg mpy_srcs plus_minus
 %type <ival> sd3
 %type <ival> funky_ctl_reg tcc_sd space
+
 %type <regs> regs
 %type <ea> movep_ea_pp
 
-%type <ival> expr
 %left '|'
 %left '^'
 %left SHL SHR
@@ -211,12 +233,12 @@ statement
 	:	good_stuff EOL
 			{substatement = 0;
 			if(NOT check_psect(seg, pc) && pass == 2)
-				yyerror("psect violation");
+				yyerror("%04X: psect violation", pc);
 			}
 	|	good_stuff EOS
 			{substatement++;
 			if(NOT check_psect(seg, pc) && pass == 2)
-				yyerror("psect violation");
+				yyerror("%04X: psect violation", pc);
 			}
 	|	error
 	;
@@ -226,11 +248,13 @@ good_stuff
 			{if(pass == 2 && list_on) {
 				printf("\n");
 			}}
+	|	cpp_droppings
 	|	COMMENT
 			{if(pass == 2 && NOT substatement && list_on) {
 				printf("%s%s\n", spaces(0), luntab(inline));
 			}}
 	|	assembler_ops comment_field
+			{long_symbolic_expr = FALSE;}
 	|	label_field operation_field comment_field
 			{char *printcode();
 			if(pass == 2) {
@@ -250,63 +274,90 @@ good_stuff
 				if(uses_w1)
 					pc++;
 			}
-			w0 = w1 = 0; uses_w1 = FALSE;}
+			w0 = w1 = 0; uses_w1 = FALSE; 
+			long_symbolic_expr = FALSE;}
 	|	SYM comment_field
-			{sym_def($1, pc);
+			{sym_def($1, INT, pc);
 			free($1);
 			if(pass == 2) {
 				if(list_on) printf("%c:%04X%s%s\n", segs[seg], pc, 
 					spaces(14-8), substatement ? "" :
 						luntab(inline));
+			long_symbolic_expr = FALSE;
 			}}
+	;
+
+cpp_droppings
+	:	'#' num STRING
+			{if(strlen($3) > 0)
+				curfile = $3;
+			curline = $2.val.i - 2;}
 	;
 
 assembler_ops
 	:	SYM OP_EQU expr
-			{sym_def($1, $3);
+			{sym_def($1, $3.type, $3.val.i, $3.val.f);
 			free($1);
-			if(pass == 2) {
-				if(list_on) printf("%06X%s%s\n", $3 & 0xFFFFFF, 
-					spaces(14-6-2), 
+			if(pass == 2 && list_on) {
+				if($3.type == INT)
+					printf("%06X%s",
+						$3.val.i & 0xFFFFFF,
+						spaces(14-6-2));
+				else
+					printf("%10g%s", $3.val.f,
+						spaces(14-10-2));
+				printf("%s\n", 
 					substatement ? "" : luntab(inline));
 			}}
+	|	OP_ALIGN expr
+			{int ival = n2int($2);
+			if($2.type == UNDEF) {
+				yyerror("illegal forward reference");
+			} else if (ival <= 1) {
+				yyerror("%d: illegal alignment", ival);
+			} else {
+				if(pc % ival != 0)
+					pc += ival - pc % ival;
+			}
+			if(pass == 2 && list_on)
+				printf("%c:%04X%s%s\n", segs[seg], pc, 
+					spaces(14-8), substatement ? "" : luntab(inline));
+			}
 	|	OP_PSECT SYM
 			{struct psect *pp = find_psect($2);
 			if(NOT pp) {
 				if(pass == 2)
-					yyerror("undefined psect");
+					yyerror("%s: undefined psect", $2);
 			} else {
 				seg = pp->seg;
 				pc = pp->pc;
 				set_psect(pp);
-				if(pass == 2) {
-					if(list_on) printf("%c:%04X%s%s\n", 
-						segs[seg], pc, 
+				if(pass == 2 && list_on) 
+					printf("%c:%04X%s%s\n", segs[seg], pc, 
 						spaces(14-8), substatement ? "" : luntab(inline));
-				}
 			}
 			free($2);}
 	|	OP_PSECT SYM space expr ':' expr
-			{new_psect($2, $3, $4, $6);
-			if(pass == 2) {
-				if(list_on) printf("%c:%04X %04X%s%s\n", 
-					segs[$3], $4, $6, spaces(14-8+4+1), 
+			{new_psect($2, $3, n2int($4), n2int($6));
+			if(pass == 2 && list_on) 
+				printf("%c:%04X %04X%s%s\n", 
+					segs[$3], n2int($4), n2int($6), spaces(14-8+4+1), 
 					substatement ? "" : luntab(inline));
-			}}
+			}
 	|	OP_ORG space expr
-			{pc = $3;
+			{pc = n2int($3);
 			seg = $2;
-			if(pass == 2) {
-				if(list_on) printf("%c:%04X%s%s\n", segs[seg], pc, 
+			if(pass == 2 && list_on) 
+				printf("%c:%04X%s%s\n", segs[seg], pc, 
 					spaces(14-8), substatement ? "" : luntab(inline));
-			}}
+			}
 	|	OP_ORG space expr ',' space expr
-			{pc = $3;
+			{pc = n2int($3);
 			seg = $2;
-			if(pass == 2) {
-				if(list_on) printf("%c:%04X%s%s\n", segs[seg], pc, 
+			if(pass == 2 && list_on)
+				printf("%c:%04X%s%s\n", segs[seg], pc, 
 					spaces(14-8), substatement ? "" : luntab(inline));
-			}}
+			}
 	|	label_field OP_DC dc_list
 	|	OP_PAGE num ',' num ',' num ',' num
 			{if(pass == 2 && NOT substatement && list_on) {
@@ -350,12 +401,17 @@ dc_stuff
 			}
 			free($1);}
  	|	expr
-			{if(pass == 2) {
-				if(list_on) printf("%c:%04X %06X%s%s\n", 
-					segs[seg], pc,
-					$1 & 0xFFFFFF, spaces(14-6+5),
-					substatement ? "" : luntab(inline));
-				gencode(seg, pc, $1);
+			{int frac = n2frac($1);
+			if(pass == 2) {
+				if(list_on) {
+					printf("%c:%04X ", segs[seg], pc);
+					printf("%06X%s", 
+						frac & 0xFFFFFF,
+							spaces(14-6+5));
+					printf("%s\n",
+						substatement ? "" : luntab(inline));
+				}
+				gencode(seg, pc, frac);
 				substatement++;
 			}
 			pc++;}
@@ -372,7 +428,7 @@ space	:	PMEM
 
 label_field
 	:	SYM
-			{sym_def($1, pc);
+			{sym_def($1, INT, pc);
 			free($1);}
 	|	/* empty */
 	;
@@ -534,9 +590,9 @@ op8_1	:	BBBB ',' AAAA
 	;
 
 op8_2	:	BBBB ',' AAAA
-			{$$ = 0x2;}
+			{$$ = 0x0;}
 	|	AAAA ',' BBBB
-			{$$ = 0x3;}
+			{$$ = 0x1;}
 	|	XREG ',' a_b
 			{$$ = 0x8 | $1 << 2 | $3;}
 	|	YREG ',' a_b
@@ -600,9 +656,9 @@ arith_inst
 	|	OP_DIV sd3
 			{w0 |= 0x018040 | $2 << 3;}
 	|	or_op ix ',' funky_ctl_reg
-			{w0 |= 0x0000F8 | ($2 & 0xFF) << 8 | $4;}
+			{w0 |= 0x0000F8 | (n2int($2) & 0xFF) << 8 | $4;}
 	|	and_op ix ',' funky_ctl_reg
-			{w0 |= 0x0000B8 | ($2 & 0xFF) << 8 | $4;}
+			{w0 |= 0x0000B8 | (n2int($2) & 0xFF) << 8 | $4;}
 	;
 
 or_op	:	OP_OR
@@ -676,8 +732,9 @@ control_inst
 	;
 
 do_args	:	ix ',' abs_addr
-			{w0 |= 0x060080 | ($1 & 0xFF) << 8 | ($1 & 0xF00)>> 8;
-			if($1 > 0xFFF && pass == 2) {
+			{int ival = n2int($1);
+			w0 |= 0x060080 | (ival & 0xFF) << 8 | (ival & 0xF00)>> 8;
+			if(ival > 0xFFF && pass == 2) {
 				yyerror("warning: immediate operand truncated");
 			}
 			w1 |= $3-1;}
@@ -701,8 +758,9 @@ do_args	:	ix ',' abs_addr
 
 rep_args
 	:	ix
-			{w0 |= 0x0600A0 | ($1 & 0xFF) << 8 | ($1 & 0xF00)>> 8;
-			if($1 > 0xFFF && pass == 2) {
+			{int ival = n2int($1);
+			w0 |= 0x0600A0 | (ival & 0xFF) << 8 | (ival & 0xF00)>> 8;
+			if(ival > 0xFFF && pass == 2) {
 				yyerror("warning: immediate operand truncated");
 			}}
 	|	regs
@@ -807,8 +865,8 @@ move_inst
 	:	OP_MOVEP movep_args
 	|	OP_MOVEM movem_args
 	|	OP_MOVEC movec_args
-	|	OP_LUA ea_short regs
-			{w0 |= 0x044010 | $2 << 8 | $3.r4;}
+	|	OP_LUA ea_short ',' regs
+			{w0 |= 0x044010 | $2 << 8 | $4.r4;}
 	|	OP_TCC tcc_args
 			{w0 |= $1 << 12;}
 	;       	
@@ -838,7 +896,7 @@ sd3	:	regs /* XREG */ ',' regs /* a_b */
 			{if($1.flags & R_XREG && $3.flags & R_AB) {
 				$$ = $1.xreg << 2 | $3.ab;
 			} else if($1.flags & R_YREG && $3.flags & R_AB) {
-				$$ = $1.yreg << 2 | $3.ab;
+				$$ = $1.yreg << 2 | 2 | $3.ab;
 			}}
 	;
 
@@ -856,11 +914,12 @@ movec_args
 				w0 |= 0x054060 | $1.ctl_reg;
 			}}
 	|	ix ',' regs /* ctl_reg */
-			{if($1 < 256) {
-				w0 |= 0x0500A0 | ($1 & 0xFF) << 8 | $3.ctl_reg; 
+			{int ival = n2int($1);
+			if(ival < 256 && NOT long_symbolic_expr) {
+				w0 |= 0x0500A0 | (ival & 0xFF) << 8 | $3.ctl_reg; 
 			} else {
 				w0 |= 0x05C020 | 0x003400 | $3.ctl_reg;
-				uses_w1++; w1 = $1 & 0xFFFF;
+				uses_w1++; w1 = ival & 0xFFFF;
 			}}
 	|	x_or_y abs_short_addr ',' regs /* ctl_reg */
 			{if($1 == 0) {
@@ -926,12 +985,13 @@ movep_args
 			}}
 	|	ix ',' x_or_y num_or_sym
 			{w0 |= 0x084080;
-			w0 |= $3 << 16 | 1 << 15 | 0x34 << 8 | ($4 & 0x3F);
+			w0 |= $3 << 16 | 1 << 15 | 0x34 << 8 | 
+				(n2int($4) & 0x3F);
 			uses_w1++;
-			w1 = $1;}
+			w1 = n2int($1);}
 	|	PMEM ea ',' x_or_y num_or_sym
 			{w0 |= 0x084040;
-			w0 |= $4 << 16 | 1 << 15 | ($5 & 0x3F);}
+			w0 |= $4 << 16 | 1 << 15 | (n2int($5) & 0x3F);}
 	|	x_or_y movep_ea_pp ',' PMEM ea
 			{w0 |= 0x084040;
 			if($2.mode != 0x003000 && $2.mode != 0)
@@ -939,7 +999,8 @@ movep_args
 			w0 |= $1 << 16 | 0 << 15 | ($2.ext & 0x3F);}
 	|	regs ',' x_or_y num_or_sym
 			{w0 |= 0x084000;
-			w0 |= $3 << 16 | 1 << 15 | $1.r6 << 8 | ($4 & 0x3F);}
+			w0 |= $3 << 16 | 1 << 15 | $1.r6 << 8 | 
+				(n2int($4) & 0x3F);}
 	|	x_or_y movep_ea_pp ',' regs
 			{w0 |= 0x084000;
 			if(!$2.pp)
@@ -949,7 +1010,7 @@ movep_args
 
 movep_ea_pp
 	:	abs_addr
-			{if($1 != -1 && $1 >= 0xFFC0) {
+			{if($1 != UNDEF && $1 >= 0xFFC0) {
 				/* defined symbol or constant, in i/o range */
 				$$.pp = 1;
 				$$.mode = 0;
@@ -967,7 +1028,8 @@ movep_ea_pp
 				yyerror("warning: address operand truncated");
 			$$.ext = $1;}
 	|	ea_no_ext
-			{$$.mode = $1 << 8;
+			{$$.pp = 0;
+			$$.mode = $1 << 8;
 			$$.ext = $1;}
 	;
 
@@ -982,7 +1044,9 @@ movem_args
 
 b5_10111_max
 	:	ix
-			{$$ = $1; if($1 > 0x17) yyerror("illegal bit number");}
+			{int ival = n2int($1);
+			$$ = ival; if(ival > 0x17) 
+				yyerror("%d: illegal bit number", ival);}
 	;
 
 x_or_y	:	XMEM
@@ -1052,12 +1116,12 @@ regs	:	XREG
 			{$$.r6 = $$.r5 = 0x04 | $1;
 			$$.sdx = $1;
 			$$.xreg = $1;
-			$$.flags = R_R6|R_R5|R_XREG|R_SDX;}
+			$$.flags = R_R6|R_R5|R_XREG|R_SDX|R_SFRAC;}
 	|	YREG
 			{$$.r6 = $$.r5 = 0x06 | $1;
 			$$.sdy = $1;
 			$$.yreg = $1;
-			$$.flags = R_R6|R_R5|R_SDY|R_YREG;}
+			$$.flags = R_R6|R_R5|R_SDY|R_YREG|R_SFRAC;}
 	|	AREG
 			{switch($1) {
 				case 0: 
@@ -1070,7 +1134,7 @@ regs	:	XREG
 					$$.r6 = $$.r5 = 0x08 | 2; 
 					break;
 			}
-			$$.flags = R_R6|R_R5;}
+			$$.flags = R_R6|R_R5|R_UINT;}
 	|	BREG
 			{switch($1) {
 				case 0: 
@@ -1080,37 +1144,37 @@ regs	:	XREG
 				case 2: 
 					$$.r6 = $$.r5 = 0x08 | 3; break;
 			}
-			$$.flags = R_R6|R_R5;}
+			$$.flags = R_R6|R_R5|R_UINT;}
 	|	AAAA
 			{$$.r6 = $$.r5 = 0x0E;
 			$$.sdx = $$.sdy = 0x2;
 			$$.ab = 0;
 			$$.lsd = 4;
-			$$.flags = R_R6|R_R5|R_SDX|R_SDY|R_AB|R_LSD;}
+			$$.flags = R_R6|R_R5|R_SDX|R_SDY|R_AB|R_LSD|R_SFRAC;}
 	|	BBBB
 			{$$.r6 = $$.r5 = 0x0F;
 			$$.sdx = $$.sdy = 0x3;
 			$$.ab = 1;
 			$$.lsd = 5;
-			$$.flags = R_R6|R_R5|R_SDX|R_SDY|R_AB|R_LSD;}
+			$$.flags = R_R6|R_R5|R_SDX|R_SDY|R_AB|R_LSD|R_SFRAC;}
 	|	RREG
 			{$$.r6 = $$.r5 = 0x10 | $1;
 			$$.r4 = 0x00 | $1;
-			$$.flags = R_R6|R_R5|R_R4;}
+			$$.flags = R_R6|R_R5|R_R4|R_UINT;}
 	|	NREG
 			{$$.r6 = $$.r5 = 0x18 | $1;
 			$$.r4 = 0x08 | $1;
-			$$.flags = R_R6|R_R5|R_R4;}
+			$$.flags = R_R6|R_R5|R_R4|R_UINT;}
 	|	MREG
 			{$$.r6 = 0x20 | $1;
 			$$.r5 = -1;
 			$$.ctl_reg = $1;
-			$$.flags = R_R6|R_R5|R_CTL_REG;}
+			$$.flags = R_R6|R_R5|R_CTL_REG|R_UINT;}
 	|	prog_ctl_reg
 			{$$.r6 = 0x38 | $1;
 			$$.r5 = -1;
 			$$.ctl_reg = 0x18 | $1;
-			$$.flags = R_R6|R_R5|R_CTL_REG;}
+			$$.flags = R_R6|R_R5|R_CTL_REG|R_UINT;}
 	|	A10
 			{$$.lsd  = 0;
 			$$.flags = R_LSD;}
@@ -1171,19 +1235,48 @@ parallel_move
 	;
 
 i_move  :	ix ',' regs
-			{if($1 <= 0xFF) {
-				w0 |= 0x200000 | ($1 & 0xFF) << 8 | 
+			{int ival = n2int($1);
+			int frac = n2frac($1);
+			int value;
+			BOOL shortform = FALSE;
+			if($3.flags & R_CTL_REG) {
+				yyerror("please use MOVEC for control register moves");
+				break;
+			}
+			if($3.flags & R_SFRAC && $1.type == FLT) {
+				if((frac & 0xFFFF) == 0 && 
+					NOT long_symbolic_expr) {
+					value = frac >> 16;
+					shortform++;
+				} else {
+					value = frac;
+				}
+			} else {
+				if(ival <= 0xFF && NOT long_symbolic_expr) {
+					value = ival;
+					shortform++;
+				} else {
+					value = ival;
+				}
+			}
+
+			if(shortform) {
+				w0 |= 0x200000 | (value & 0xFF) << 8 |
 					$3.r5 << 16;
-			} else { /* go long, use X: format */
-				w0 |= 0x400000 | 0x00F400 | 
+			} else {
+				w0 |= 0x400000 | 0x00F400 |
 					($3.r5 >> 3 & 3) << 20 | 
 					($3.r5 & 7) << 16;
-				uses_w1++; w1 = $1;
+				uses_w1++; w1 = value;
 			}}
 	;
 
 r_move	:	regs ',' regs
 			{
+				if($3.flags & R_CTL_REG) {
+					yyerror("please use MOVEC for control register moves");
+					break;
+				}
 				if($1.flags & R_R5 & $3.flags) 
 					w0 |= 0x200000 | $3.r5 << 8 | $1.r5 << 13;
 				else
@@ -1198,24 +1291,44 @@ u_move	:	ea_short
 x_or_y_move
 	:	x_or_y ea ',' regs
 			{w0 |= 0x40C000 | $1 << 19;
+			if($4.flags & R_CTL_REG) {
+				yyerror("please use MOVEC for control register moves");
+				break;
+			}
 			w0 |= ($4.r5 >> 3 & 3) << 20 | ($4.r5 & 7) << 16;}
 	|	x_or_y abs_short_addr ',' regs
 			{w0 |= 0x408000 | $1 << 19 | ($2 & 0x3F) << 8;
+			if($4.flags & R_CTL_REG) {
+				yyerror("please use MOVEC for control register moves");
+				break;
+			}
 			if($2 > 0x003F && pass == 2)
 				yyerror("warning: address operand truncated");
 			w0 |= ($4.r5>> 3 & 3) << 20 | ($4.r5 & 7) << 16;}
 	|	regs ',' x_or_y ea
 			{w0 |= 0x404000 | $3 << 19;
+			if($1.flags & R_CTL_REG) {
+				yyerror("please use MOVEC for control register moves");
+				break;
+			}
 			w0 |= ($1.r5 >> 3 & 3) << 20 | ($1.r5 & 7) << 16;}
 	|	regs ',' x_or_y abs_short_addr
 			{w0 |= 0x400000 | $3 << 19 | ($4 & 0x3F) << 8;
+			if($1.flags & R_CTL_REG) {
+				yyerror("please use MOVEC for control register moves");
+				break;
+			}
 			if($4 > 0x003F && pass == 2)
 				yyerror("warning: address operand truncated");
 			w0 |= ($1.r5 >> 3 & 3) << 20 | ($1.r5 & 7) << 16;}
 	|	ix_long ',' regs
 			{w0 |= 0x400000 | 0x00F400 | ($3.r5 >> 3 & 3) << 20 |
 			    ($3.r5 & 7) << 16;
-			uses_w1++; w1 = $1;
+			if($3.flags & R_CTL_REG) {
+				yyerror("please use MOVEC for control register moves");
+				break;
+			}
+			uses_w1++; w1 = n2frac($1);
 			}
 	;
 
@@ -1231,7 +1344,7 @@ xr_move	:	x_or_y /* XMEM */ ea ',' regs	regs /* a_b */ ',' YREG
 				w0 |= 0x10B400 | $3.sdx << 18 | $4.ab << 17 |
 					$6 << 16;
 				uses_w1++;
-				w1 |= $1 & 0xFFFFFF;
+				w1 |= n2frac($1) & 0xFFFFFF;
 			} else {
 				yyerror("illegal X:R move");
 			}}
@@ -1256,7 +1369,7 @@ xr_move	:	x_or_y /* XMEM */ ea ',' regs	regs /* a_b */ ',' YREG
 
 ry_move	:	regs /* a_b */ ',' regs /* XREG	*/      YMEM ea ',' regs
 			{if($3.flags & R_XREG && $7.flags & (R_YREG|R_AB)) {
-				w0 |= 0x10C000 | $1.ab << 19 | $3.yreg << 18 |
+				w0 |= 0x10C000 | $1.ab << 19 | $3.xreg << 18 |
 					$7.sdy << 16;
 			} else {
 				yyerror("illegal R:Y move");
@@ -1266,7 +1379,7 @@ ry_move	:	regs /* a_b */ ',' regs /* XREG	*/      YMEM ea ',' regs
 				w0 |= 0x10F400 | $1.ab << 19 | $3.xreg << 18 |
 					$6.sdy << 16;
 				uses_w1++;
-				w1 |= $4 & 0xFFFFFF;
+				w1 |= n2frac($4) & 0xFFFFFF;
 			} else {
 				yyerror("illegal R:Y move");
 			}}
@@ -1289,46 +1402,89 @@ ry_move	:	regs /* a_b */ ',' regs /* XREG	*/      YMEM ea ',' regs
 	;
 
 l_move	:	LMEM ea ',' regs /* lsd */
-			{w0 |= 0x40C000 | ($4.lsd & 3) << 16 | ($4.lsd >> 2) << 19;}
+			{if($4.flags & R_CTL_REG) {
+				yyerror("please use MOVEC for control register moves");
+				break;
+			}
+			w0 |= 0x40C000 | ($4.lsd & 3) << 16 | ($4.lsd >> 2) << 19;}
 	|	regs /* lsd */ ',' LMEM ea
-			{w0 |= 0x404000 | ($1.lsd & 3) << 16 | ($1.lsd >> 2) << 19;}
+			{if($1.flags & R_CTL_REG) {
+				yyerror("please use MOVEC for control register moves");
+				break;
+			}
+			w0 |= 0x404000 | ($1.lsd & 3) << 16 | ($1.lsd >> 2) << 19;}
 	|	LMEM abs_short_addr ',' regs /* lsd */
 			{w0 |= 0x408000 | ($4.lsd & 3) << 16 | ($4.lsd >> 2) << 19;
+			if($4.flags & R_CTL_REG) {
+				yyerror("please use MOVEC for control register moves");
+				break;
+			}
 			if($2 > 0x003F && pass == 2)
 				yyerror("warning: address operand truncated");
 			w0 |= ($2 & 0x3F) << 8;}
 	|	regs /* lsd */ ',' LMEM abs_short_addr
 			{w0 |= 0x400000 | ($1.lsd & 3) << 16 | ($1.lsd >> 2) << 19;
+			if($1.flags & R_CTL_REG) {
+				yyerror("please use MOVEC for control register moves");
+				break;
+			}
 			if($4 > 0x003F && pass == 2)
 				yyerror("warning: address operand truncated");
 			w0 |= ($4 & 0x3F) << 8;}
 	;
 
 xy_move	:	x_or_y /*XMEM*/ ea /*ea_strange*/ ',' regs	YMEM ea /*ea_strange*/ ',' regs
-			/* $$$ where is $4 and $8 (sdy) used? */
-			{int eax = $2, eay = $6;
-			w0 = 0xC08000;	/* both write */
-	      		if(eax & 0x4 == eay & 0x4)
+			{int eax = $2, eay = $6,
+			     regx = ($4.flags & R_AB) ? $4.ab | 2 : $4.xreg,
+			     regy = ($8.flags & R_AB) ? $8.ab | 2 : $8.yreg;
+			if((eax & 0x400) == (eay & 0x400))
 				yyerror("registers must be in opposite halves");
-			w0 |= eax << 8 | (eay & 3) << 13 | (eay >> 3) << 18;}
+			if(!($4.flags & (R_AB | R_XREG)))
+				yyerror("invalid X move register");
+			if(!($8.flags & (R_AB | R_YREG)))
+				yyerror("invalid Y move register");
+			if($4.flags & R_AB &&
+			   $8.flags & R_AB &&
+			   $4.ab == $8.ab)
+				yyerror("duplicate destination register");
+			w0 = w0 & 0xFF | 0xC08000;	/* both write */
+			w0 |= eax & 0x1f00 | (eay & 0x300) << 5 | (eay & 0x1800) << 9 | regx << 18 | regy << 16;}
 	|	x_or_y /*XMEM*/ ea /*ea_strange*/ ',' regs	regs ',' YMEM ea /*ea_strange*/
-			{int eax = $2, eay = $8;
-			w0 = 0x808000;	/* X:write, Y:read */
-	      		if(eax & 0x4 == eay & 0x4)
+			{int eax = $2, eay = $8,
+			     regx = ($4.flags & R_AB) ? $4.ab | 2 : $4.xreg,
+			     regy = ($5.flags & R_AB) ? $5.ab | 2 : $5.yreg;
+			if((eax & 0x400) == (eay & 0x400))
 				yyerror("registers must be in opposite halves");
-			w0 |= eax << 8 | (eay & 3) << 13 | (eay >> 3) << 18;}
+			if(!($4.flags & (R_AB | R_XREG)))
+				yyerror("invalid X move register");
+			if(!($5.flags & (R_AB | R_YREG)))
+				yyerror("invalid Y move register");
+			w0 = w0 & 0xFF | 0x808000;	/* X:write, Y:read */
+			w0 |= eax & 0x1f00 | (eay & 0x300) << 5 | (eay & 0x1800) << 9 | regx << 18 | regy << 16;}
 	|	regs ',' x_or_y /*XMEM*/ ea /*ea_strange*/	YMEM ea /*ea_strange*/ ',' regs
-			{int eax = $4, eay = $6;
-	      		w0 = 0xC00000;	/* X:read, Y:write */
-			if(eax & 0x4 == eay & 0x4)
+			{int eax = $4, eay = $6,
+			     regx = ($1.flags & R_AB) ? $1.ab | 2 : $1.xreg,
+			     regy = ($8.flags & R_AB) ? $8.ab | 2 : $8.yreg;
+			if((eax & 0x400) == (eay & 0x400))
 				yyerror("registers must be in opposite halves");
-			w0 |= eax << 8 | (eay & 3) << 13 | (eay >> 3) << 18;}
+			if(!($1.flags & (R_AB | R_XREG)))
+				yyerror("invalid X move register");
+			if(!($8.flags & (R_AB | R_YREG)))
+				yyerror("invalid Y move register");
+	      		w0 = w0 & 0xFF | 0xC00000;	/* X:read, Y:write */
+			w0 |= eax & 0x1f00 | (eay & 0x300) << 5 | (eay & 0x1800) << 9 | regx << 18 | regy << 16;}
 	|	regs ',' x_or_y /*XMEM*/ ea /*ea_strange*/	regs ',' YMEM ea /*ea_strange*/
-			{int eax = $4, eay = $8;
-	      		w0 = 0x800000;	/* both read */
-			if(eax & 0x4 == eay & 0x4)
+			{int eax = $4, eay = $8,
+			     regx = ($1.flags & R_AB) ? $1.ab | 2 : $1.xreg,
+			     regy = ($5.flags & R_AB) ? $5.ab | 2 : $5.yreg;
+			if((eax & 0x400) == (eay & 0x400))
 				yyerror("registers must be in opposite halves");
-			w0 |= eax << 8 | (eay & 3) << 13 | (eay >> 3) << 18;}
+			if(!($1.flags & (R_AB | R_XREG)))
+				yyerror("invalid X move register");
+			if(!($5.flags & (R_AB | R_YREG)))
+				yyerror("invalid Y move register");
+	      		w0 = w0 & 0xFF | 0x800000;	/* both read */
+			w0 |= eax & 0x1f00 | (eay & 0x300) << 5 | (eay & 0x1800) << 9 | regx << 18 | regy << 16;}
 	;
 
 /*%%%******* absolute address and immediate data fields ************/
@@ -1344,7 +1500,9 @@ num	:	CHEX
 ix	:	'#' expr
 			{$$ = $2;}
 	|	'#' '<' expr
-			{$$ = $3 & 0xFF;}
+			{$$.val.i = n2int($3) & 0xFF;
+			$$.type = INT;
+			long_symbolic_expr = FALSE;}
 	;
 
 ix_long	:	'#' '>' expr
@@ -1353,26 +1511,26 @@ ix_long	:	'#' '>' expr
 
 abs_addr
 	:	expr
-			{$$ = $1;}
+			{$$ = n2int($1);}
 	|	'*'
 			{$$ = pc;}
 	;
 
 abs_short_addr
 	:	'<' expr
-			{$$ = $2;}
+			{$$ = n2int($2);}
 	|	'<' '*'
 			{$$ = pc;}
 	;
 
 io_short_addr
 	:	SHL expr
-			{$$ = $2;} 
+			{$$ = n2int($2);} 
 	;
 
 num_or_sym
 	:	num
-			{$$ = $1 & 0xFFFFFF;}
+			{$$ = $1;}
 	|	SYM
 			{$$ = sym_ref($1); free($1);}
 	;
@@ -1381,35 +1539,35 @@ num_or_sym_expr
 	:	num
 			{$$ = $1;}
 	|	SYM
-			{$$ = sym_ref($1); free($1);}
+			{$$ = sym_ref($1); free($1); long_symbolic_expr++;}
 	|	CHAR
-			{$$ = $1;}
+			{$$.type = INT; $$.val.i = $1 & 0xFFFFFF;}
 	;
 
 expr	:	expr '|' expr
-			{$$ = $1 | $3;}
+			{$$ = binary_op($1, '|', $3);}
 	|	expr '^' expr
-			{$$ = $1 ^ $3;}
+			{$$ = binary_op($1, '^', $3);}
 	|	expr '&' expr
-			{$$ = $1 & $3;}
+			{$$ = binary_op($1, '&', $3);}
 	|	expr SHR expr
-			{$$ = $1 >> $3;}
+			{$$ = binary_op($1, SHR, $3);}
 	|	expr SHL expr
-			{$$ = $1 << $3;}
+			{$$ = binary_op($1, SHL, $3);}
 	|	expr '-' expr
-			{$$ = $1 - $3;}
+			{$$ = binary_op($1, '-', $3);}
 	|	expr '+' expr
-			{$$ = $1 + $3;}
+			{$$ = binary_op($1, '+', $3);}
 	|	expr '%' expr
-			{$$ = $1 % $3;}
+			{$$ = binary_op($1, '%', $3);}
 	|	expr '/' expr
-			{$$ = $1 / $3;}
+			{$$ = binary_op($1, '/', $3);}
 	|	expr '*' expr
-			{$$ = $1 * $3;}
+			{$$ = binary_op($1, '*', $3);}
 	|	'-' expr %prec '~'
-			{$$ = - $2;}
+			{$$ = unary_op('-', $2);}
 	|	'~' expr
-			{$$ = ~ $2;}
+			{$$ = unary_op('~', $2);}
 	|	'(' expr ')'
 			{$$ = $2;}
 	|	num_or_sym_expr
@@ -1423,6 +1581,123 @@ expr	:	expr '|' expr
 #include <stdio.h>
 
 int yydebug;
+
+struct n binary_op(a1, op, a2)
+struct n a1, a2;
+int op;
+{
+    struct n result;
+
+    if(a1.type == UNDEF || a2.type == UNDEF) {
+	result.type = UNDEF;
+	return result;
+    }
+
+    /* promote to float automatically */
+
+    if(a1.type != a2.type) {
+	if(a1.type == INT) {
+	    a1.val.f = a1.val.i;	/* truncate */
+	    a1.type = FLT;
+	} else {
+	    a2.val.f = a2.val.i;	/* truncate */
+	}
+    }
+    result.type = a1.type;
+
+    /* do the op */
+
+    if(result.type == INT) {
+	switch(op) {
+	    case '+':	result.val.i = a1.val.i + a2.val.i; break;
+	    case '-':	result.val.i = a1.val.i - a2.val.i; break;
+	    case '*':	result.val.i = a1.val.i * a2.val.i; break;
+	    case '/':	result.val.i = a1.val.i / a2.val.i; break;
+	    case '%':	result.val.i = a1.val.i % a2.val.i; break;
+	    case SHL:	result.val.i = a1.val.i << a2.val.i; break;
+	    case SHR:	result.val.i = a1.val.i >> a2.val.i; break;
+	    case '|':	result.val.i = a1.val.i | a2.val.i; break;
+	    case '&':	result.val.i = a1.val.i & a2.val.i; break;
+	    case '^':	result.val.i = a1.val.i ^ a2.val.i; break;
+	}
+    } else {
+	switch(op) {
+	    case '+':	result.val.f = a1.val.f + a2.val.f; break;
+	    case '-':	result.val.f = a1.val.f - a2.val.f; break;
+	    case '*':	result.val.f = a1.val.f * a2.val.f; break;
+	    case '/':	result.val.f = a1.val.f / a2.val.f; break;
+	    case '%':	result.val.f = (int)a1.val.f % (int)a2.val.f; break;
+	    case SHL:	result.val.f = (int)a1.val.f << (int)a2.val.f; break;
+	    case SHR:	result.val.f = (int)a1.val.f >> (int)a2.val.f; break;
+	    case '|':	result.val.f = (int)a1.val.f | (int)a2.val.f; break;
+	    case '&':	result.val.f = (int)a1.val.f & (int)a2.val.f; break;
+	    case '^':	result.val.f = (int)a1.val.f ^ (int)a2.val.f; break;
+	}
+    }
+
+    return result;
+}
+
+struct n unary_op(op, a1)
+int op;
+struct n a1;
+{
+    struct n result;
+
+    if(a1.type == UNDEF) {
+	result.type = UNDEF;
+	return result;
+    }
+
+    result.type = a1.type;
+
+    /* do the op */
+
+    if(result.type == INT) {
+	switch(op) {
+	    case '-':	result.val.i = -a1.val.i; break;
+	    case '~':	result.val.i = ~a1.val.i; break;
+	}
+    } else {
+	switch(op) {
+	    case '-':	result.val.f = -a1.val.f; break;
+	    case '~':	result.val.f = ~(int)a1.val.f; break;
+	}
+    }
+
+    return result;
+}
+
+n2int(n)
+struct n n;
+{
+    if(n.type == UNDEF)
+	return UNDEF;
+    else if(n.type == INT)
+	return n.val.i;
+    else
+	return n.val.f;
+}
+
+n2frac(n)
+struct n n;
+{
+    double adval = n.val.f >= 0.0 ? n.val.f : -n.val.f;
+
+    if(n.type == UNDEF)
+	return UNDEF;
+    else if(n.type == INT)
+	return n.val.i;
+
+    adval -= (double)(int)adval;
+    adval *= (double)0x800000;
+    adval += 0.5;
+
+    if(n.val.f >= 0.0)
+	return adval;
+    else
+	return -adval;
+}
 
 extern struct {int n; char *name;} tok_tab[];
 extern int n_tok;
@@ -1445,19 +1720,24 @@ int tok;
     return("<unknown>");
 }
 
-yyerror(s)
-char *s;
+yyerror(s, a0, a1, a2, a3)
+char *s, *a0, *a1, *a2, *a3;
 {
     extern int error;
+    char buf[1024];
+
     error++;
+    sprintf(buf, s, a0, a1, a2, a3);
 
     if(pass == 2) {
 	fprintf(stderr, "%s: line %d: %s (tok=%s)\n", curfile, curline,
-	    s, tok_print(yychar));
+	    buf, tok_print(yychar));
 	fprintf(stderr, "%s\n", inline); 
 	printf("%s: line %d: %s (tok=%s)\n", curfile, curline,
-	    s, tok_print(yychar));
+	    buf, tok_print(yychar));
+#if 0
 	printf("%s\n", inline); 
+#endif
     }
 }
 
@@ -1470,3 +1750,4 @@ char *s;
 
     untab(buf);
     return(buf);
+}

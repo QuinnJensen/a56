@@ -1,6 +1,6 @@
 %{
 /*
- * Copyright (C) 1990, 1991 Quinn C. Jensen
+ * Copyright (C) 1990-1992 Quinn C. Jensen
  *
  * Permission to use, copy, modify, distribute, and sell this software
  * and its documentation for any purpose is hereby granted without fee,
@@ -55,7 +55,6 @@ BW	(^|{WHITE})
 {WHITE}			;
 \n			{curline++; RET(EOL);}
 @			{RET(EOS);}
-^#.*$			|
 ;.*$			{RET(COMMENT);}
 {X}:			{RET(XMEM);}
 {Y}:			{RET(YMEM);}
@@ -85,9 +84,9 @@ BW	(^|{WHITE})
 {R}[0-7]		{yylval.ival = atoi(&yytext[1]); RET(RREG);}
 {X}[01]			{yylval.ival = atoi(&yytext[1]); RET(XREG);}
 {Y}[01]			{yylval.ival = atoi(&yytext[1]); RET(YREG);}
-"$"{HEXNUM}		{yylval.ival = strtol(&yytext[1], 0, 16); RET(CHEX);}
-{FRAC}			{yylval.ival = makefrac(yytext); RET(FRAC);}
-{NUM}			{yylval.ival = atoi(&yytext[0]); RET(CDEC);}
+"$"{HEXNUM}		{yylval.n.type = INT; yylval.n.val.i = strtol(&yytext[1], 0, 16); RET(CHEX);}
+{FRAC}			{yylval.n.type = FLT; yylval.n.val.f = atof(yytext); RET(FRAC);}
+{NUM}			{yylval.n.type = INT; yylval.n.val.i = atoi(yytext); RET(CDEC);}
 {A}{B}{S}               {RET(OP_ABS);}
 {A}{D}{C}               {RET(OP_ADC);}
 {A}{D}{D}               {RET(OP_ADD);}
@@ -110,6 +109,7 @@ BW	(^|{WHITE})
 {S}{U}{B}               {RET(OP_SUB);}
 {S}{U}{B}{L}            {RET(OP_SUBL);}
 {S}{U}{B}{R}            {RET(OP_SUBR);}
+{T}{C}{C}               {yylval.cond = 0x0; RET(OP_TCC);}
 {T}{H}{S}               {yylval.cond = 0x0; RET(OP_TCC);}
 {T}{G}{E}               {yylval.cond = 0x1; RET(OP_TCC);}
 {T}{N}{E}               {yylval.cond = 0x2; RET(OP_TCC);}
@@ -152,6 +152,7 @@ BW	(^|{WHITE})
 {M}{O}{V}{E}{P}         {RET(OP_MOVEP);}
 {I}{N}{C}{L}{U}{D}{E}   {RET(OP_INCLUDE);}
 {I}{L}{L}{E}{G}{A}{L}   {RET(OP_ILLEGAL);}
+{J}{C}{C}               {yylval.cond = 0x0; RET(OP_JCC);}
 {J}{H}{S}               {yylval.cond = 0x0; RET(OP_JCC);}
 {J}{G}{E}               {yylval.cond = 0x1; RET(OP_JCC);}
 {J}{N}{E}               {yylval.cond = 0x2; RET(OP_JCC);}
@@ -172,6 +173,7 @@ BW	(^|{WHITE})
 {J}{M}{P}               {RET(OP_JMP);}
 {J}{C}{L}{R}            {RET(OP_JCLR);}
 {J}{S}{E}{T}            {RET(OP_JSET);}
+{J}{S}{C}{C}            {yylval.cond = 0x0; RET(OP_JSCC);}
 {J}{S}{H}{S}            {yylval.cond = 0x0; RET(OP_JSCC);}
 {J}{S}{G}{E}            {yylval.cond = 0x1; RET(OP_JSCC);}
 {J}{S}{N}{E}            {yylval.cond = 0x2; RET(OP_JSCC);}
@@ -206,6 +208,7 @@ BW	(^|{WHITE})
 {E}{N}{D}               {RET(OP_END);}
 {P}{A}{G}{E}            {RET(OP_PAGE);}
 {P}{S}{E}{C}{T}         {RET(OP_PSECT);}
+{A}{L}{I}{G}{N}         {RET(OP_ALIGN);}
 {ALNUM}			{yylval.sval = strsave(yytext); RET(SYM);};
 '\\b'			{yylval.cval = '\b'; RET(CHAR);};
 '\\f'			{yylval.cval = '\f'; RET(CHAR);};
@@ -214,6 +217,7 @@ BW	(^|{WHITE})
 '\\t'			{yylval.cval = '\t'; RET(CHAR);};
 '\\\\'			{yylval.cval = '\\'; RET(CHAR);};
 '.'			{yylval.cval = yytext[1]; RET(CHAR);};
+\".*\"			|
 '..+'			{yylval.sval = (char *)fixstring(yytext);
 				yylval.sval = strsave(yylval.sval);
 				RET(STRING);};

@@ -9,7 +9,7 @@
  *******************************************************\
 
 /*
- * Copyright (C) 1990, 1991 Quinn C. Jensen
+ * Copyright (C) 1990-1992 Quinn C. Jensen
  *
  * Permission to use, copy, modify, distribute, and sell this software
  * and its documentation for any purpose is hereby granted without fee,
@@ -37,7 +37,16 @@ typedef int BOOL;
 
 struct sym {
     char *name;
-    int val;
+    struct n {
+	int type;
+#define UNDEF -1
+#define INT 0
+#define FLT 1
+	union val {
+	    int i;
+	    double f;
+        } val;
+    } n;
     struct sym *next;
 } *find_sym();
 

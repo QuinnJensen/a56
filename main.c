@@ -9,7 +9,7 @@
  *******************************************************\
 
 /*
- * Copyright (C) 1990, 1991 Quinn C. Jensen
+ * Copyright (C) 1990-1992 Quinn C. Jensen
  *
  * Permission to use, copy, modify, distribute, and sell this software
  * and its documentation for any purpose is hereby granted without fee,
@@ -20,7 +20,7 @@
  * provided "as is" without express or implied warranty.
  *
  */
-static char *Copyright = "Copyright (C) 1990, 1991 Quinn C. Jensen";
+static char *Copyright = "Copyright (C) 1990-1992 Quinn C. Jensen";
 
 /*
  *  main.c - The "main" code for the assembler.
@@ -36,6 +36,7 @@ int error;
 extern unsigned long pc;
 extern int seg;
 BOOL binary_listing = FALSE;
+BOOL list_includes = FALSE;
 FILE *obj = NULL;
 BOOL list_on = TRUE;
 char *alloc();
@@ -45,25 +46,40 @@ int argc;
 char *argv[];
 {
     int i;
-    obj = open_write("a56.out");
+    extern char *optarg;
+    extern int optind;
+    int c;
+    char *output_file = "a56.out";
+    char *input_file;
 
-    if(argc > 2 && strcmp(argv[1], "-b") == 0) {
-	binary_listing++;
-	argc--;
-	argv++;
+    while((c = getopt(argc, argv, "blo:")) != EOF) switch (c) {
+	case 'b':
+	    binary_listing++;
+	    break;
+	case 'l':
+	    list_includes++;
+	    break;
+	case 'o':
+	    output_file = optarg;
+	    break;
+	case '?':
+	default:
+	    fatal("usage: a56  [-b]  [-l]  [-o output-file]  input-file\n");
     }
+    input_file = argv[optind++];
+    obj = open_write(output_file);
 
     pc = 0;
     seg = 0;
     pass = 1;
     reset_psects();
-    include(argv[1]);
+    include(input_file);
 
     pc = 0;
     seg = 0;
     pass = 2;
     reset_psects();
-    include(argv[1]);
+    include(input_file);
 
     dump_symtab();
     fclose(obj);
@@ -89,7 +105,7 @@ char *file;
     inc[inc_p].line = 0;
 
     list_on = TRUE;
-    if(inc_p > 1)
+    if(inc_p > 1 && NOT list_includes)
 	list_on = FALSE;
 
     yyin = inc[inc_p].fp;
@@ -112,39 +128,44 @@ yywrap()
     }
 }
 
-sym_ref(sym)	/* return symbol value or -1 if not defined yet */
+struct n
+sym_ref(sym)	/* return symbol value or UNDEF if not defined yet */
 char *sym;
 {
     struct sym *sp, *find_sym();
-    char msg[128];
+    struct n result;
+
+    result.type = UNDEF;
 
     sp = find_sym(sym);
     if(NOT sp) {
 	if(pass == 2) {
-	    sprintf(msg, "%s: undefined symbol", sym);
-	    yyerror(msg);
+	    yyerror("%s: undefined symbol", sym);
 	}           
-	return(-1);
+	return result;
     }
-    return(sp->val);
+
+    return sp->n;
 }
 
-#define HASHSIZE 32
+#define HASHSIZE 128
 
-#define HASH(sym) ((sym)[0] % HASHSIZE)
+#define HASH(sym) (((sym)[0] ^ sym[1]) % HASHSIZE)
 
 struct sym *symtab[HASHSIZE];
 
-sym_def(sym, val)
+sym_def(sym, type, i, f)
 char *sym;
-int val;
+int type;
+int i;
+double f;
 {
     struct sym *sp, **stop, *find_sym();
 
     if(pass == 1) {
 	if(find_sym(sym)) {
 	    pass = 2;		/* what a kludge */
-	    yyerror("multiply defined symbol");
+	    yyerror("%s: multiply defined symbol", sym);
 	    pass = 1;
 	    return;
 	}
@@ -153,8 +174,20 @@ int val;
 	sp->next = *stop;
 	*stop = sp;
 	sp->name = strsave(sym);
-	sp->val = val & 0xFFFFFF;
-    }
+	sp->n.type = type;
+	if(type == INT)
+	    sp->n.val.i = i & 0xFFFFFF;
+	else
+	    sp->n.val.f = f;
+    } else {
+	sp = find_sym(sym);
+	if(NOT sp)
+	    fatal("internal error 304\n");
+	if(sp->n.type != type ||
+	    type == INT && sp->n.val.i != (i & 0xFFFFFF) ||
+	    type == FLT && sp->n.val.f != f)
+	    yyerror("%s: assembler phase error", sym);
+    }	
 }
 
 struct sym *find_sym(sym)
@@ -179,7 +212,10 @@ dump_symtab()
 
     for(i = 0, stop = symtab; i < HASHSIZE; i++, stop++) {
 	for(sp = *stop; sp; sp = sp->next) {
-	    printf("%16s %06X\n", sp->name, sp->val);
+	    if(sp->n.type == INT)
+		printf("%16s %06X\n", sp->name, sp->n.val.i);
+	    else
+		printf("%16s %20.10f\n", sp->name, sp->n.val.f);
 	}
     }   
 }
@@ -237,6 +273,7 @@ char *s;
     while(*s) {
 	switch (*s) {
 	    case '\'':
+	    case '\"':
 		s++;
 		break;
 	    case '\\':

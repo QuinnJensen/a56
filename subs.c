@@ -9,7 +9,7 @@
  *******************************************************\
 
 /*
- * Copyright (C) 1990, 1991 Quinn C. Jensen
+ * Copyright (C) 1990-1992 Quinn C. Jensen
  *
  * Permission to use, copy, modify, distribute, and sell this software
  * and its documentation for any purpose is hereby granted without fee,
@@ -20,7 +20,7 @@
  * provided "as is" without express or implied warranty.
  *
  */
-static char *Copyright = "Copyright (C) 1990, 1991 Quinn C. Jensen";
+static char *Copyright = "Copyright (C) 1990-1992 Quinn C. Jensen";
 
 /*
  *  subs.c - Some subroutines for the assembler.

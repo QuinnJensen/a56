@@ -109,8 +109,9 @@ struct {int n; char *name;} tok_tab[] = {
     {364, "OP_END"},
     {365, "OP_PAGE"},
     {366, "OP_PSECT"},
-    {367, "SHL"},
-    {368, "SHR"},
+    {367, "OP_ALIGN"},
+    {368, "SHL"},
+    {369, "SHR"},
 };
 #define N_TOK (sizeof tok_tab / sizeof tok_tab[0])
 int n_tok = N_TOK;

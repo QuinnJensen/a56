@@ -10,12 +10,12 @@
 
 LIB = -ll
 
-OBJS = main.o gram.o lex.o tok_tab.o subs.o
+OBJS = main.o gram.o lex.o tok_tab.o subs.o getopt.o
 
 #NOTE: lex.c cannot be compiled with -g.  An assembler bug causes the text
 #  symbols to be messed up (at least on the Icon system).
 
-CFLAGS = -g -DYYDEBUG
+CFLAGS = -O -DYYDEBUG
 
 all:	a56 toomf
 
@@ -48,3 +48,5 @@ tape:	; tar cvbf 1 - Makefile main.c a56.y lex.c a56.l tok.awk \
 		a56.h qcjlib.h *.a56 | compress > a56.tar.Z
 
 main.o gram.o lex.o:	a56.h
+
+clean:	; rm -f a56 toomf y.output *.o *.out

@@ -1,6 +1,8 @@
 
 typedef union  {
 	int ival;	/* integer value */
+	struct n n;	/* just like in struct sym */
+	double dval;	/* floating point value */
 	char *sval;	/* string */
 	int cval;	/* character */
 	char cond;	/* condition */
@@ -126,5 +128,6 @@ extern YYSTYPE yylval;
 # define OP_END 364
 # define OP_PAGE 365
 # define OP_PSECT 366
-# define SHL 367
-# define SHR 368
+# define OP_ALIGN 367
+# define SHL 368
+# define SHR 369

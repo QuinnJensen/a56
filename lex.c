@@ -14,8 +14,8 @@
  *
  */
 
-#include "gram.h"
 #include "a56.h"
+#include "gram.h"
 
 extern YYSTYPE yyval;
 
@@ -32,6 +32,8 @@ int ldebug;
 #else
 #define RET(val) return(val)
 #endif
+
+double atof();
 
 #include "lex.yy.c"
 
